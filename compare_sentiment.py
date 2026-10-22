@@ -1,13 +1,17 @@
-"""Compare out-of-the-box sentiment from VADER and BERT, line by line, on a text file.
+"""Compare out-of-the-box sentiment from VADER, BERT and SiEBERT, line by line, on a text file.
 
 VADER: rule/lexicon-based, English-only. Reports a compound score in [-1, 1];
   the conventional cutoffs are >= 0.05 positive, <= -0.05 negative.
 BERT: nlptown/bert-base-multilingual-uncased-sentiment, predicts 1-5 stars.
   To compare against VADER, the star probabilities are collapsed into an
   expected star rating and mapped linearly onto [-1, 1] (1★ -> -1, 3★ -> 0, 5★ -> +1).
+SiEBERT: siebert/sentiment-roberta-large-english, RoBERTa-large fine-tuned on 15
+  English datasets of varied text; predicts positive or negative. Its score is
+  P(positive) - P(negative), in [-1, 1].
 
-BERT accepts at most 512 tokens, so longer lines are cut off at that point and
-flagged in the CSV; VADER always reads the whole line. Blank lines are skipped.
+Both transformer models accept at most 512 tokens, so longer lines are cut off at
+that point and flagged in the CSV; VADER always reads the whole line. Blank lines
+are skipped.
 
 Usage:
     python compare_sentiment.py                 # run on pg5200.txt
@@ -18,12 +22,17 @@ Usage:
 import argparse
 import csv
 from collections import Counter
+from itertools import combinations
 from statistics import correlation, mean
 
 from transformers import pipeline
 from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
 
 MODEL = "nlptown/bert-base-multilingual-uncased-sentiment"
+SIEBERT_MODEL = "siebert/sentiment-roberta-large-english"
+
+# (display name, CSV prefix) for each tool; each has <prefix>_score and <prefix>_label columns
+TOOLS = (("VADER", "vader"), ("BERT", "bert"), ("SiEBERT", "siebert"))
 
 
 def label(score, threshold=0.05):
@@ -34,15 +43,26 @@ def label(score, threshold=0.05):
     return "neu"
 
 
-def bert_scores(texts):
-    classifier = pipeline("sentiment-analysis", model=MODEL, top_k=None)
+def classify(model, texts):
+    """Yield each text's {label: probability} and whether it exceeded the model's token limit."""
+    classifier = pipeline("sentiment-analysis", model=model, top_k=None)
     max_len = classifier.tokenizer.model_max_length
     for text, dist in zip(texts, classifier(list(texts), truncation=True)):
-        probs = {int(d["label"].split()[0]): d["score"] for d in dist}
+        truncated = len(classifier.tokenizer(text, verbose=False)["input_ids"]) > max_len
+        yield {d["label"]: d["score"] for d in dist}, truncated
+
+
+def bert_scores(texts):
+    for dist, truncated in classify(MODEL, texts):
+        probs = {int(name.split()[0]): p for name, p in dist.items()}
         top = max(probs, key=probs.get)
         expected = sum(stars * p for stars, p in probs.items())
-        truncated = len(classifier.tokenizer(text, verbose=False)["input_ids"]) > max_len
         yield probs, top, (expected - 3) / 2, truncated
+
+
+def siebert_scores(texts):
+    for dist, truncated in classify(SIEBERT_MODEL, texts):
+        yield dist["POSITIVE"], dist["POSITIVE"] - dist["NEGATIVE"], truncated
 
 
 def main():
@@ -57,19 +77,20 @@ def main():
     vader = SentimentIntensityAnalyzer()
     rows = []
 
-    print(f"{'line':>4}  {'VADER':>13}   {'BERT':>21}   agree  text")
-    for line, text, (probs, stars, bert_norm, truncated) in zip(line_nums, texts, bert_scores(texts)):
+    print(f"{'line':>4}  {'VADER':>13}   {'BERT':>21}   {'SiEBERT':>13}   agree  text")
+    results = zip(line_nums, texts, bert_scores(texts), siebert_scores(texts))
+    for line, text, (probs, stars, bert_norm, bert_cut), (sie_pos, sie_norm, sie_cut) in results:
         vs = vader.polarity_scores(text)
         compound = vs["compound"]
-        v, b = label(compound), label(bert_norm, threshold=0.2)
+        v, b, s = label(compound), label(bert_norm, threshold=0.2), label(sie_norm, threshold=0.5)
         snippet = text if len(text) <= 60 else text[:57] + "..."
         print(
             f"{line:>4}  {compound:+.3f} ({v})   {stars}★ {probs[stars]:4.0%} {bert_norm:+.3f} ({b})"
-            f"   {'yes' if v == b else 'NO':>5}  {snippet}"
+            f"   {sie_norm:+.3f} ({s})   {'all' if v == b == s else '':>5}  {snippet}"
         )
         rows.append({
             "line": line,
-            "vader_compound": compound,
+            "vader_score": compound,
             "vader_neg": vs["neg"],
             "vader_neu": vs["neu"],
             "vader_pos": vs["pos"],
@@ -78,10 +99,14 @@ def main():
             **{f"bert_p{n}": round(probs[n], 4) for n in range(1, 6)},
             "bert_score": round(bert_norm, 4),
             "bert_label": b,
-            "bert_truncated": truncated,
-            "agree": v == b,
+            "siebert_p_pos": round(sie_pos, 4),
+            "siebert_score": round(sie_norm, 4),
+            "siebert_label": s,
+            "truncated": bert_cut or sie_cut,
+            "agree_vader_bert": v == b,
+            "agree_vader_siebert": v == s,
+            "agree_bert_siebert": b == s,
             "text": text,
-
         })
 
     with open(args.csv, "w", newline="", encoding="utf-8") as f:
@@ -94,27 +119,29 @@ def main():
 
 def summarize(rows):
     labels = ("pos", "neu", "neg")
-    vader = [r["vader_compound"] for r in rows]
-    bert = [r["bert_score"] for r in rows]
-    pairs = Counter((r["vader_label"], r["bert_label"]) for r in rows)
 
     print(f"\nSummary of {len(rows)} lines")
-    print(f"  {'':6}{'pos':>5}{'neu':>5}{'neg':>5}   mean score")
-    for name, scores in (("VADER", vader), ("BERT", bert)):
-        counts = Counter(r[f"{name.lower()}_label"] for r in rows)
-        print(f"  {name:6}" + "".join(f"{counts[l]:>5}" for l in labels) + f"   {mean(scores):+.3f}")
+    print(f"  {'':8}{'pos':>5}{'neu':>5}{'neg':>5}   mean score")
+    for name, key in TOOLS:
+        counts = Counter(r[f"{key}_label"] for r in rows)
+        print(f"  {name:8}" + "".join(f"{counts[l]:>5}" for l in labels)
+              + f"   {mean(r[f'{key}_score'] for r in rows):+.3f}")
 
-    agree = sum(pairs[l, l] for l in labels)
-    opposite = pairs["pos", "neg"] + pairs["neg", "pos"]
-    print(f"\n  Labels agree:       {agree} of {len(rows)} ({agree / len(rows):.0%})")
-    print(f"  Opposite direction: {opposite} (VADER pos/BERT neg {pairs['pos', 'neg']}, "
-          f"VADER neg/BERT pos {pairs['neg', 'pos']})")
-    print(f"  One side neutral:   {len(rows) - agree - opposite}")
-    if len(rows) > 1:
-        print(f"  Rank correlation:   {correlation(vader, bert, method='ranked'):+.2f} (Spearman)")
-    truncated = sum(r["bert_truncated"] for r in rows)
+    print(f"\n  {'':17}{'agree':>11}{'opposite':>10}{'one neutral':>13}{'rank corr':>11}")
+    for (a_name, a), (b_name, b) in combinations(TOOLS, 2):
+        pairs = Counter((r[f"{a}_label"], r[f"{b}_label"]) for r in rows)
+        agree = sum(pairs[l, l] for l in labels)
+        opposite = pairs["pos", "neg"] + pairs["neg", "pos"]
+        corr = (f"{correlation([r[f'{a}_score'] for r in rows], [r[f'{b}_score'] for r in rows], method='ranked'):+.2f}"
+                if len(rows) > 1 else "")
+        print(f"  {a_name + ' / ' + b_name:17}{agree:>5} ({agree / len(rows):3.0%}){opposite:>10}"
+              f"{len(rows) - agree - opposite:>13}{corr:>11}")
+
+    all_agree = sum(r["vader_label"] == r["bert_label"] == r["siebert_label"] for r in rows)
+    print(f"\n  All three agree:  {all_agree} of {len(rows)} ({all_agree / len(rows):.0%})")
+    truncated = sum(r["truncated"] for r in rows)
     if truncated:
-        print(f"  Truncated for BERT: {truncated}")
+        print(f"  Truncated:        {truncated}")
 
 
 if __name__ == "__main__":
