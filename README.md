@@ -3,7 +3,7 @@
 Compares off-the-shelf sentiment analysis tools, line by line, on a text file. By default the file is `pg5200.txt`, David Wyllie's translation of Franz Kafka's *The Metamorphosis* edited to contain one paragraph per line.
 
 - **VADER**: a rule- and word-list-based scorer. English only.
-- **VADER-C**: VADER with its word ratings replaced by those in `claude_vader_lexicon.txt`. It has the same 7,506 words and the same rules, with different ratings for most words.
+- **VADER-C**: VADER with its word ratings replaced by those in `VADER-C_lexicon.txt`. It has the same 7,506 words and the same rules, with different ratings for most words.
 - **BERT**: [`nlptown/bert-base-multilingual-uncased-sentiment`](https://huggingface.co/nlptown/bert-base-multilingual-uncased-sentiment), a model trained on product reviews that predicts a 1–5 star rating. Works in English, Spanish, French, German, Dutch and Italian.
 - **SiEBERT**: [`siebert/sentiment-roberta-large-english`](https://huggingface.co/siebert/sentiment-roberta-large-english), a larger model trained on 15 English datasets covering many kinds of text, not just reviews. It only predicts positive or negative. English only.
 

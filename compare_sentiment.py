@@ -2,7 +2,7 @@
 
 VADER: rule/lexicon-based, English-only. Reports a compound score in [-1, 1];
   the conventional cutoffs are >= 0.05 positive, <= -0.05 negative.
-VADER-C: VADER's rules with the word ratings from claude_vader_lexicon.txt
+VADER-C: VADER's rules with the word ratings from VADER-C_lexicon.txt
   instead of VADER's built-in lexicon.
 BERT: nlptown/bert-base-multilingual-uncased-sentiment, predicts 1-5 stars.
   To compare against VADER, the star probabilities are collapsed into an
@@ -73,7 +73,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("file", nargs="?", default="pg5200.txt", help="text file, one passage per line")
     parser.add_argument("--csv", default="sentiment_comparison.csv", help="CSV output path")
-    parser.add_argument("--lexicon", default="claude_vader_lexicon.txt", help="word ratings for VADER-C")
+    parser.add_argument("--lexicon", default="VADER-C_lexicon.txt", help="word ratings for VADER-C")
     args = parser.parse_args()
 
     with open(args.file, encoding="utf-8") as f:
