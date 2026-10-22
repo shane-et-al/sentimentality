@@ -17,6 +17,8 @@ Usage:
 
 import argparse
 import csv
+from collections import Counter
+from statistics import correlation, mean
 
 from transformers import pipeline
 from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
@@ -87,6 +89,32 @@ def main():
         writer.writeheader()
         writer.writerows(rows)
     print(f"\nWrote {len(rows)} rows to {args.csv}")
+    summarize(rows)
+
+
+def summarize(rows):
+    labels = ("pos", "neu", "neg")
+    vader = [r["vader_compound"] for r in rows]
+    bert = [r["bert_score"] for r in rows]
+    pairs = Counter((r["vader_label"], r["bert_label"]) for r in rows)
+
+    print(f"\nSummary of {len(rows)} lines")
+    print(f"  {'':6}{'pos':>5}{'neu':>5}{'neg':>5}   mean score")
+    for name, scores in (("VADER", vader), ("BERT", bert)):
+        counts = Counter(r[f"{name.lower()}_label"] for r in rows)
+        print(f"  {name:6}" + "".join(f"{counts[l]:>5}" for l in labels) + f"   {mean(scores):+.3f}")
+
+    agree = sum(pairs[l, l] for l in labels)
+    opposite = pairs["pos", "neg"] + pairs["neg", "pos"]
+    print(f"\n  Labels agree:       {agree} of {len(rows)} ({agree / len(rows):.0%})")
+    print(f"  Opposite direction: {opposite} (VADER pos/BERT neg {pairs['pos', 'neg']}, "
+          f"VADER neg/BERT pos {pairs['neg', 'pos']})")
+    print(f"  One side neutral:   {len(rows) - agree - opposite}")
+    if len(rows) > 1:
+        print(f"  Rank correlation:   {correlation(vader, bert, method='ranked'):+.2f} (Spearman)")
+    truncated = sum(r["bert_truncated"] for r in rows)
+    if truncated:
+        print(f"  Truncated for BERT: {truncated}")
 
 
 if __name__ == "__main__":
