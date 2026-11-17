@@ -2,7 +2,7 @@
 
 Sentiment analysis tool comparison and visualization. 
 
-By default, the file is `pg5200.txt`, David Wyllie's translation of Franz Kafka's *The Metamorphosis* from Project Gutenberg, edited to contain one sentence per line to avoid BERT/SiEBERT's token limits.
+By default, the file is `pg5200.txt`, David Wyllie's translation of Franz Kafka's *The Metamorphosis* from Project Gutenberg, edited to contain one sentence per line/chunk to avoid BERT/SiEBERT's token limits. To shake things up, `pg5200-3.txt`, a three-sentence per line text file is included but not used that gives each chunk more context.
 
 - **VADER**: a rule- and word-list-based scorer. English only.
 - **VADER-C**: VADER with its word ratings replaced by those in `VADER-C_lexicon.txt`. It has the same 7,506 words and the same rules, with different ratings for most words.
