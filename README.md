@@ -20,6 +20,30 @@ Blank lines are skipped. The script prints a summary table and writes one row pe
 
 BERT and SiEBERT can read at most 512 tokens (roughly 350–400 English words), so for longer lines they only see the beginning. These lines are marked in the `truncated` column. VADER always reads the whole line.
 
+## HTML visualization
+
+```sh
+uv run python make_html.py                 # sentiment_comparison.csv -> sentiment_comparison.html
+uv run python make_html.py other.csv       # visualize another CSV
+uv run python make_html.py --source pg5200.txt --open   # label the source in the header and open it
+```
+
+Writes a single self-contained HTML file (no internet or libraries needed) with:
+
+- Summary cards: how often the four tools agree, per-tool label distributions,
+  pairwise agreement/opposition/rank-correlation, and the most common
+  whole-chunk label patterns. Click any of them to filter the chunk list.
+- A score timeline: one panel per tool over all chunks, with each tool's
+  neutral zone shaded. Hover for values, click a point to inspect the chunk.
+- A chunk-by-chunk heat strip: each chunk is a row, the four tools are columns,
+  cells are colored by label (green pos / gray neu / red neg, darker = stronger).
+  Rows where tools disagree are highlighted; agreeing rows fade back; the left
+  gutter shows how many distinct labels each chunk got. Filter by disagreement
+  type or pair, search the text, and sort by score spread to surface the
+  biggest differences first.
+- A detail panel (click any chunk) with the full text and exact scores, BERT's
+  star probabilities, VADER's word shares and SiEBERT's certainty.
+
 ## CSV columns
 
 | Column | Range | Meaning |
