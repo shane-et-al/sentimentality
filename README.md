@@ -1,6 +1,8 @@
 # sentimentality
 
-Compares off-the-shelf sentiment analysis tools, line by line, on a text file. By default the file is `pg5200.txt`, David Wyllie's translation of Franz Kafka's *The Metamorphosis* edited to contain one paragraph per line.
+Sentiment analysis tool comparison and visualization. 
+
+By default, the file is `pg5200.txt`, David Wyllie's translation of Franz Kafka's *The Metamorphosis* from Project Gutenberg, edited to contain one sentence per line to avoid BERT/SiEBERT's token limits.
 
 - **VADER**: a rule- and word-list-based scorer. English only.
 - **VADER-C**: VADER with its word ratings replaced by those in `VADER-C_lexicon.txt`. It has the same 7,506 words and the same rules, with different ratings for most words.
