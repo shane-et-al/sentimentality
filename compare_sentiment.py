@@ -43,6 +43,7 @@ from statistics import correlation, mean
 from transformers import pipeline
 from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
 
+INPUT_FILE = "pg5200.txt"
 BERT_MODEL = "nlptown/bert-base-multilingual-uncased-sentiment"
 SIEBERT_MODEL = "siebert/sentiment-roberta-large-english"
 
@@ -138,7 +139,7 @@ def main():
         FileNotFoundError: If the input file or the VADER-C lexicon does not exist.
     """
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("file", nargs="?", default="pg5200.txt", help="text file, one passage per line")
+    parser.add_argument("file", nargs="?", default=INPUT_FILE, help="text file, one passage per line")
     parser.add_argument("--csv", default="sentiment_comparison.csv", help="CSV output path")
     parser.add_argument("--lexicon", default="VADER-C_lexicon.txt", help="word ratings for VADER-C")
     args = parser.parse_args()
