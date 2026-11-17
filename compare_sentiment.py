@@ -32,7 +32,7 @@ from statistics import correlation, mean
 from transformers import pipeline
 from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
 
-MODEL = "nlptown/bert-base-multilingual-uncased-sentiment"
+BERT_MODEL = "nlptown/bert-base-multilingual-uncased-sentiment"
 SIEBERT_MODEL = "siebert/sentiment-roberta-large-english"
 
 # (display name, CSV prefix) for each tool; each has <prefix>_score and <prefix>_label columns
@@ -57,7 +57,7 @@ def classify(model, texts):
 
 
 def bert_scores(texts):
-    for dist, truncated in classify(MODEL, texts):
+    for dist, truncated in classify(BERT_MODEL, texts):
         probs = {int(name.split()[0]): p for name, p in dist.items()}
         top = max(probs, key=probs.get)
         expected = sum(stars * p for stars, p in probs.items())
