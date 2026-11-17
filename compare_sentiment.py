@@ -1,25 +1,36 @@
 """Compare out-of-the-box sentiment from VADER, BERT and SiEBERT, line by line, on a text file.
 
-VADER: rule/lexicon-based, English-only. Reports a compound score in [-1, 1];
-  the conventional cutoffs are >= 0.05 positive, <= -0.05 negative.
-VADER-C: VADER's rules with the word ratings from VADER-C_lexicon.txt
-  instead of VADER's built-in lexicon.
-BERT: nlptown/bert-base-multilingual-uncased-sentiment, predicts 1-5 stars.
-  To compare against VADER, the star probabilities are collapsed into an
-  expected star rating and mapped linearly onto [-1, 1] (1★ -> -1, 3★ -> 0, 5★ -> +1).
-SiEBERT: siebert/sentiment-roberta-large-english, RoBERTa-large fine-tuned on 15
-  English datasets of varied text; predicts positive or negative. Its score is
-  P(positive) - P(negative), in [-1, 1].
+Each line of the input file is treated as one passage. Every passage is scored
+by four tools, the per-line comparison is printed, and one row per line is
+written to a CSV:
+
+    VADER: rule/lexicon-based, English-only. Reports a compound score in
+        [-1, 1]; the conventional cutoffs are >= 0.05 positive, <= -0.05
+        negative.
+    VADER-C: VADER's rules with the word ratings from VADER-C_lexicon.txt
+        instead of VADER's built-in lexicon.
+    BERT: nlptown/bert-base-multilingual-uncased-sentiment, predicts 1-5 stars.
+        To compare against VADER, the star probabilities are collapsed into an
+        expected star rating and mapped linearly onto [-1, 1] (1★ -> -1,
+        3★ -> 0, 5★ -> +1).
+    SiEBERT: siebert/sentiment-roberta-large-english, RoBERTa-large fine-tuned
+        on 15 English datasets of varied text; predicts positive or negative.
+        Its score is P(positive) - P(negative), in [-1, 1].
 
 Both transformer models accept at most 512 tokens, so longer lines are cut off at
 that point and flagged in the CSV; VADER always reads the whole line. Blank lines
 are skipped.
 
-Usage:
-    python compare_sentiment.py                 # run on pg5200.txt
-    python compare_sentiment.py other.txt       # run on another file
-    python compare_sentiment.py --csv out.csv   # choose where the CSV goes
-    python compare_sentiment.py --lexicon x.txt # choose the VADER-C lexicon
+Examples:
+    Compare each line of pg5200.txt (the default), writing
+    sentiment_comparison.csv::
+
+        python compare_sentiment.py
+
+    Compare another file, choosing where the CSV goes and which word ratings
+    to use for VADER-C::
+
+        python compare_sentiment.py other.txt --csv out.csv --lexicon x.txt
 """
 
 import argparse
@@ -40,6 +51,16 @@ TOOLS = (("VADER", "vader"), ("VADER-C", "vader_claude"), ("BERT", "bert"), ("Si
 
 
 def label(score, threshold=0.05):
+    """Turn a score in [-1, 1] into a pos/neu/neg label.
+
+    Args:
+        score (float): Sentiment score in [-1, 1].
+        threshold (float): Scores >= threshold label as "pos", scores
+            <= -threshold as "neg", and anything in between as "neu".
+
+    Returns:
+        str: "pos", "neg" or "neu".
+    """
     if score >= threshold:
         return "pos"
     if score <= -threshold:
@@ -48,7 +69,17 @@ def label(score, threshold=0.05):
 
 
 def classify(model, texts):
-    """Yield each text's {label: probability} and whether it exceeded the model's token limit."""
+    """Score texts with a Hugging Face sentiment-analysis pipeline.
+
+    Args:
+        model (str): Hugging Face model name.
+        texts (Iterable[str]): Texts to score, in order.
+
+    Yields:
+        tuple[dict[str, float], bool]: For each text, its label -> probability
+        distribution and whether the text exceeded the model's maximum token
+        count, in which case the pipeline truncated it.
+    """
     classifier = pipeline("sentiment-analysis", model=model, top_k=None)
     max_len = classifier.tokenizer.model_max_length
     for text, dist in zip(texts, classifier(list(texts), truncation=True)):
@@ -57,6 +88,18 @@ def classify(model, texts):
 
 
 def bert_scores(texts):
+    """Score texts with the BERT review model, normalized onto [-1, 1].
+
+    Args:
+        texts (Iterable[str]): Texts to score, in order.
+
+    Yields:
+        tuple[dict[int, float], int, float, bool]: For each text, in order: the
+        probability of each star rating (keys 1-5), the most likely star
+        rating, the probability-weighted average star rating mapped linearly
+        onto [-1, 1] (1★ -> -1, 3★ -> 0, 5★ -> +1), and whether the text was
+        truncated.
+    """
     for dist, truncated in classify(BERT_MODEL, texts):
         probs = {int(name.split()[0]): p for name, p in dist.items()}
         top = max(probs, key=probs.get)
@@ -65,11 +108,35 @@ def bert_scores(texts):
 
 
 def siebert_scores(texts):
+    """Score texts with SiEBERT, normalized onto [-1, 1].
+
+    Args:
+        texts (Iterable[str]): Texts to score, in order.
+
+    Yields:
+        tuple[float, float, bool]: For each text, in order: P(positive),
+        P(positive) - P(negative) in [-1, 1], and whether the text was
+        truncated.
+    """
     for dist, truncated in classify(SIEBERT_MODEL, texts):
         yield dist["POSITIVE"], dist["POSITIVE"] - dist["NEGATIVE"], truncated
 
 
 def main():
+    """Compare all four tools on every non-blank line and write the CSV.
+
+    Command-line arguments (see ``--help`` and the module docstring): an
+    optional positional ``file`` names the text to score (one passage per
+    line, default pg5200.txt), ``--csv`` sets the CSV output path (default
+    sentiment_comparison.csv, overwritten on every run), and ``--lexicon``
+    sets the word ratings used for VADER-C (default VADER-C_lexicon.txt).
+
+    Prints a per-line comparison table, writes the CSV, then prints a summary
+    of label counts and pairwise agreement (see ``summarize``).
+
+    Raises:
+        FileNotFoundError: If the input file or the VADER-C lexicon does not exist.
+    """
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("file", nargs="?", default="pg5200.txt", help="text file, one passage per line")
     parser.add_argument("--csv", default="sentiment_comparison.csv", help="CSV output path")
@@ -129,6 +196,20 @@ def main():
 
 
 def summarize(rows):
+    """Print summary statistics over the rows collected by ``main``.
+
+    Prints, per tool: label counts and mean score. Then, per pair of tools:
+    agreement (same label), disagreement (one said pos, the other neg), the
+    remainder (at least one of the pair called the line neutral), and Spearman
+    rank correlation of the scores. Finally, how often all four tools agreed
+    and how many lines were truncated.
+
+    Args:
+        rows (list[dict]): The rows collected in ``main``: one dict per line
+            with ``<prefix>_score`` and ``<prefix>_label`` keys for each tool
+            (prefixes "vader", "vader_claude", "bert", "siebert"), a
+            boolean "truncated" key, and the line's "text".
+    """
     labels = ("pos", "neu", "neg")
 
     print(f"\nSummary of {len(rows)} lines")

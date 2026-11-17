@@ -1,28 +1,32 @@
 #!/usr/bin/env python3
 """Build an interactive HTML visualization from compare_sentiment.py's CSV output.
 
-Reads sentiment_comparison.csv (or another CSV the script produced) and writes a
-single self-contained HTML file - no internet, no external libraries - showing:
+Reads the comparison CSV (default sentiment_comparison.csv) and writes a single
+self-contained HTML file - no internet, no external libraries - with:
 
-  * summary cards: agreement rates, per-tool label distributions, pairwise
-    agreement/opposition/rank-correlation stats, and the most common
-    whole-row label patterns (click any of them to filter)
-  * a score timeline: one panel per tool over all chunks, with each tool's
-    neutral zone shaded, hover values and click-to-inspect
-  * a chunk-by-chunk heat strip where every chunk is a row and the four tools
-    are columns; rows where the tools disagree are highlighted, agreeing rows
-    fade back, and a left gutter encodes how many labels split
-  * a detail panel with the chunk's full text and each tool's exact scores
+    * summary cards: agreement rates, per-tool label distributions, pairwise
+      agreement/opposition/rank-correlation stats, and the most common
+      whole-row label patterns (click any of them to filter)
+    * a score timeline: one panel per tool over all chunks, with each tool's
+      neutral zone shaded, hover values and click-to-inspect
+    * a chunk-by-chunk heat strip where every chunk is a row and the four tools
+      are columns; rows where the tools disagree are highlighted, agreeing rows
+      fade back, and a left gutter encodes how many labels split
+    * a detail panel with the chunk's full text and each tool's exact scores
 
-Usage:
-    python make_html.py                       # sentiment_comparison.csv -> .html
-    python make_html.py other.csv             # pick a different CSV
-    python make_html.py --html out.html       # choose where the HTML goes
-    python make_html.py --source "pg5200.txt" # name shown in the page header
-    python make_html.py --open                # open the result in a browser
+Note:
+    Works best for up to a few thousand chunks; the heat strip shrinks its row
+    height to stay inside the browser's maximum canvas size.
 
-Works best for up to a few thousand chunks (the heat strip shrinks its row
-height to stay inside the browser's maximum canvas size).
+Examples:
+    Turn the default CSV into sentiment_comparison.html::
+
+        python make_html.py
+
+    Visualize another CSV, choose the output path, label the source in the
+    page header, and open the result in a browser when done::
+
+        python make_html.py other.csv --html out.html --source pg5200.txt --open
 """
 
 import argparse
@@ -947,6 +951,21 @@ updateCount();
 
 
 def main():
+    """Read a comparison CSV and write the self-contained HTML file.
+
+    The CSV must have the columns written by ``compare_sentiment.py`` (see
+    that script's docstring for the full list). The HTML embeds the rows as
+    JSON together with the page's styles and JavaScript, so the output works
+    offline with no local files or network access.
+
+    Command-line arguments: an optional positional ``csv_path`` naming the CSV
+    to read (default sentiment_comparison.csv), ``--html`` for the output path
+    (default sentiment_comparison.html), ``--source`` for a name shown in the
+    page header, and ``--open`` to launch a browser tab when done.
+
+    Raises:
+        SystemExit: If the CSV is missing an expected column or contains no rows.
+    """
     ap = argparse.ArgumentParser(
         description="Build a self-contained HTML visualization from compare_sentiment.py's CSV output.",
         epilog="Example: uv run python make_html.py sentiment_comparison.csv --source pg5200.txt --open",
