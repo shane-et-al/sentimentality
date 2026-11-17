@@ -127,6 +127,7 @@ canvas{display:block}
       <option value="all">All chunks</option>
       <option value="notag">Tools disagree (any split)</option>
       <option value="agree">All four agree</option>
+      <option value="minority">Minority report (3 agree, 1 differs)</option>
       <option value="split2">Split exactly 2 ways</option>
       <option value="split3">Split exactly 3 ways</option>
       <option value="split4">Split 4 different ways</option>
@@ -266,6 +267,11 @@ function passes(r){
   switch (state.mode){
     case "agree": return r.all;
     case "notag": return !r.all;
+    case "minority": {
+      const c = {};
+      for (const l of r.L) c[l] = (c[l] || 0) + 1;
+      return Math.max(...Object.values(c)) === 3; // exactly 3+1, not 2+2 or 2+1+1
+    }
     case "split2": return r.distinct === 2;
     case "split3": return r.distinct === 3;
     case "split4": return r.distinct === 4;
@@ -320,11 +326,25 @@ function mkSpanWrap(swatch, text){ const w = el("span", "d"); w.append(swatch, e
 /* ---------- dashboard ---------- */
 function renderAgreement(){
   const counts = { 1:0, 2:0, 3:0, 4:0 };
-  for (const r of DATA) counts[r.distinct]++;
+  let minority = 0;
+  for (const r of DATA){
+    counts[r.distinct]++;
+    const c = {};
+    for (const l of r.L) c[l] = (c[l] || 0) + 1;
+    if (Math.max(...Object.values(c)) === 3) minority++; // 3 agree, 1 differs
+  }
   const ag = $("agreement");
   ag.innerHTML = "";
   const big = el("div");
   big.append(el("span", "big", pctText(counts[1], N)), el("span", "bigsub", ` of chunks — all four tools give the same label (${counts[1]} of ${N})`));
+  const minSpan = el("span", "bigsub");
+  minSpan.style.display = "block";
+  const minBtn = el("a");
+  minBtn.href = "#";
+  minBtn.textContent = `${minority} minority report${minority === 1 ? "" : "s"} — 3 tools agree, 1 differs`;
+  minBtn.addEventListener("click", e => { e.preventDefault(); setMode("minority"); });
+  minSpan.append(minBtn);
+  big.append(minSpan);
   ag.append(big);
   const bar = el("div", "segbar");
   for (const k of [1, 2, 3, 4]){
