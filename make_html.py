@@ -9,7 +9,7 @@ self-contained HTML file - no internet, no external libraries - with:
       whole-row label patterns (click any of them to filter)
     * a score timeline: one panel per tool over all chunks, with each tool's
       neutral zone shaded, hover values and click-to-inspect
-    * a chunk-by-chunk heat strip where every chunk is a row and the four tools
+    * a chunk-by-chunk heat strip where every chunk is a row and the tools
       are columns; rows where the tools disagree are highlighted, agreeing rows
       fade back, and a left gutter encodes how many labels split
     * a detail panel with the chunk's full text and each tool's exact scores
@@ -40,7 +40,7 @@ HTML = r"""<!doctype html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Sentiment tool comparison — VADER · VADER-C · BERT · SiEBERT</title>
+<title>Sentiment tool comparison — VADER · VADER-C · BERT · SiEBERT · RoBERTa</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⚖️</text></svg>">
 <style>
 *{box-sizing:border-box}
@@ -68,6 +68,8 @@ header h1{margin:0;font-size:22px;letter-spacing:-.01em}
 .stacked{display:flex;height:15px;border-radius:8px;overflow:hidden;background:#f1f3f5}
 .stacked>div{min-width:1px}
 .mean{color:#868e96;text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+#pairs-wrap{overflow-x:auto}
+@media (min-width:900px){.card.wide{grid-column:span 2}}
 table.pairs{border-collapse:collapse;width:100%;font-size:12.5px}
 table.pairs th{color:#868e96;font-weight:500;text-align:left;padding:3px 6px;border-bottom:1px solid #e9ecef;white-space:nowrap}
 table.pairs td{padding:4.5px 6px;border-bottom:1px solid #f1f3f5;font-variant-numeric:tabular-nums;white-space:nowrap}
@@ -133,7 +135,6 @@ table.pairs tbody tr:hover{background:#f8f9fa}
 .agreechips{display:flex;gap:7px;align-items:center;margin-top:11px;flex-wrap:wrap;font-size:11.5px;color:#868e96}
 canvas{display:block}
 @media (max-width:760px){.extras{grid-template-columns:1fr}.sb{grid-template-columns:56px 1fr 118px}}
-.extras .mini:nth-child(3){grid-column:1/-1}
 </style>
 </head>
 <body>
@@ -145,16 +146,16 @@ canvas{display:block}
 </header>
 
 <section class="cards">
-  <div class="card"><h2>Do the four tools agree?</h2><div id="agreement"></div><p class="note">Click a bar segment to show only those chunks.</p></div>
+  <div class="card"><h2>Do the tools agree?</h2><div id="agreement"></div><p class="note">Click a bar segment to show only those chunks.</p></div>
   <div class="card"><h2>Label distribution per tool</h2><div id="dist"></div><p class="note">Each tool's own cutoffs applied; <span class="mean" style="display:inline">mean = mean score.</span></p></div>
-  <div class="card"><h2>Pairwise agreement</h2><div id="pairs-wrap"></div><p class="note">ρ = Spearman rank correlation of the scores. Click a row to show only chunks where that pair disagrees.</p></div>
-  <div class="card"><h2>Common label patterns</h2><div id="patterns"></div><p class="note">Chunks sharing the same four labels, most common first. Order: VADER, VADER-C, BERT, SiEBERT. Click to filter.</p></div>
+  <div class="card wide"><h2>Pairwise agreement</h2><div id="pairs-wrap"></div><p class="note">ρ = Spearman rank correlation of the scores. Click a row to show only chunks where that pair disagrees.</p></div>
+  <div class="card"><h2>Common label patterns</h2><div id="patterns"></div><p class="note">Chunks sharing the same labels from every tool, most common first. Order: VADER, VADER-C, BERT, SiEBERT, RoBERTa. Click to filter.</p></div>
 </section>
 
 <section class="card">
   <h2>Scores by chunk</h2>
   <canvas id="chart"></canvas>
-  <p class="hint">Shaded band = each tool's neutral zone (its label cutoff). Hover for values, click a point to inspect that chunk.</p>
+  <p class="hint">Shaded band = each tool's neutral zone (its label cutoff; RoBERTa picks its own label, so it has none). Hover for values, click a point to inspect that chunk.</p>
 </section>
 
 <section class="card">
@@ -163,19 +164,13 @@ canvas{display:block}
     <select id="mode">
       <option value="all">All chunks</option>
       <option value="notag">Tools disagree (any split)</option>
-      <option value="agree">All four agree</option>
-      <option value="minority">Minority report (3 agree, 1 differs)</option>
+      <option value="agree">All tools agree</option>
+      <option value="minority">Minority report (all but one agree)</option>
       <option value="split2">Split exactly 2 ways</option>
       <option value="split3">Split exactly 3 ways</option>
       <option value="split4">Split 4 different ways</option>
       <option value="neutral">Any tool says neutral</option>
       <option value="trunc">Truncated (over 512 tokens)</option>
-      <option value="pair-0">VADER ↔ VADER-C disagree</option>
-      <option value="pair-1">VADER ↔ BERT disagree</option>
-      <option value="pair-2">VADER ↔ SiEBERT disagree</option>
-      <option value="pair-3">VADER-C ↔ BERT disagree</option>
-      <option value="pair-4">VADER-C ↔ SiEBERT disagree</option>
-      <option value="pair-5">BERT ↔ SiEBERT disagree</option>
     </select>
     <input type="search" id="search" placeholder="Search text or line number…">
     <select id="sort">
@@ -224,9 +219,12 @@ const TOOLS = [
   { key:"vc", name:"VADER-C", color:"#ae3ec9", cutoff:0.05, skey:"vc", lkey:"vcl" },
   { key:"b",  name:"BERT",    color:"#e8590c", cutoff:0.2,  skey:"b",  lkey:"bl"  },
   { key:"s",  name:"SiEBERT", color:"#0c8599", cutoff:0.5,  skey:"s",  lkey:"sl"  },
+  /* cutoff null: the model picks its own label, so there is no neutral zone */
+  { key:"r",  name:"RoBERTa", color:"#5f3dc4", cutoff:null, skey:"r",  lkey:"rl"  },
 ];
+const NT = TOOLS.length;
 const PAIRS = [];
-for (let i = 0; i < 4; i++) for (let j = i + 1; j < 4; j++) PAIRS.push([i, j]);
+for (let i = 0; i < NT; i++) for (let j = i + 1; j < NT; j++) PAIRS.push([i, j]);
 
 const LAB = {
   pos: { color:"#2f9e44", chipBg:"#d3f9d8", chipFg:"#2b8a3e", fill:"47,158,68",  sym:"+", word:"positive" },
@@ -239,8 +237,8 @@ const SPLIT_NAME = { 1:"all agree", 2:"split 2 ways", 3:"split 3 ways", 4:"split
 
 const N = DATA.length;
 for (const r of DATA) {
-  r.L = [r.vl, r.vcl, r.bl, r.sl];
-  r.S = [r.v, r.vc, r.b, r.s];
+  r.L = TOOLS.map(t => r[t.lkey]);
+  r.S = TOOLS.map(t => r[t.skey]);
   r.distinct = new Set(r.L).size;
   r.all = r.distinct === 1;
   r.spread = Math.max(...r.S) - Math.min(...r.S);
@@ -288,7 +286,7 @@ function hideTip(){ tip.style.display = "none"; }
 
 function rowTipHTML(r){
   const snippets = r.t.length > 110 ? r.t.slice(0, 110) + "…" : r.t;
-  const split = r.all ? "all four tools agree" : `<span class="tt-split">⚠ labels split ${r.distinct} ways</span>`;
+  const split = r.all ? `all ${NT} tools agree` : `<span class="tt-split">⚠ labels split ${r.distinct} ways</span>`;
   return `<div class="tt-line">line ${r.l} · ${split}${r.tr ? " · ✂ truncated" : ""}</div>` +
     `<div class="tt-text">${esc(snippets)}</div>` +
     `<table class="ttt">` +
@@ -307,7 +305,7 @@ function passes(r){
     case "minority": {
       const c = {};
       for (const l of r.L) c[l] = (c[l] || 0) + 1;
-      return Math.max(...Object.values(c)) === 3; // exactly 3+1, not 2+2 or 2+1+1
+      return Math.max(...Object.values(c)) === NT - 1; // all but one agree
     }
     case "split2": return r.distinct === 2;
     case "split3": return r.distinct === 3;
@@ -339,7 +337,7 @@ function renderHeader(){
   for (const t of TOOLS){
     const li = el("span", "li");
     const d = el("span", "dot"); d.style.background = t.color;
-    li.append(d, el("b", null, t.name), el("span", null, `label cutoff ±${t.cutoff}`));
+    li.append(d, el("b", null, t.name), el("span", null, t.cutoff == null ? "own label" : `label cutoff ±${t.cutoff}`));
     lg.append(li);
   }
   for (const lab of ["pos", "neu", "neg"]){
@@ -351,7 +349,7 @@ function renderHeader(){
   const dl = $("difflegend");
   dl.append(el("span", "d", "left gutter:"));
   const dot = el("span", "dotmini"); dot.style.background = "#868e96";
-  dl.append(mkSpanWrap(dot, "dot = all four labels equal"));
+  dl.append(mkSpanWrap(dot, "dot = all labels equal"));
   for (const k of [2, 3, 4]){
     const s = el("span", "dsev"); s.style.background = SPLIT_FILL[k]; s.style.boxShadow = `inset 0 0 0 1px ${SPLIT_EDGE[k]}`;
     dl.append(mkSpanWrap(s, `${SPLIT_NAME[k]}`));
@@ -368,17 +366,17 @@ function renderAgreement(){
     counts[r.distinct]++;
     const c = {};
     for (const l of r.L) c[l] = (c[l] || 0) + 1;
-    if (Math.max(...Object.values(c)) === 3) minority++; // 3 agree, 1 differs
+    if (Math.max(...Object.values(c)) === NT - 1) minority++; // all but one agree
   }
   const ag = $("agreement");
   ag.innerHTML = "";
   const big = el("div");
-  big.append(el("span", "big", pctText(counts[1], N)), el("span", "bigsub", ` of chunks — all four tools give the same label (${counts[1]} of ${N})`));
+  big.append(el("span", "big", pctText(counts[1], N)), el("span", "bigsub", ` of chunks — all ${NT} tools give the same label (${counts[1]} of ${N})`));
   const minSpan = el("span", "bigsub");
   minSpan.style.display = "block";
   const minBtn = el("a");
   minBtn.href = "#";
-  minBtn.textContent = `${minority} minority report${minority === 1 ? "" : "s"} — 3 tools agree, 1 differs`;
+  minBtn.textContent = `${minority} minority report${minority === 1 ? "" : "s"} — ${NT - 1} tools agree, 1 differs`;
   minBtn.addEventListener("click", e => { e.preventDefault(); setMode("minority"); });
   minSpan.append(minBtn);
   big.append(minSpan);
@@ -572,7 +570,7 @@ function layoutGrid(){
   effRowH = rowHeightFor(visible);
   const truncW = anyTrunc ? 18 : 0;
   const body = gridW - 46 - 26 - truncW;
-  colW = body / 4;
+  colW = body / NT;
   colX = TOOLS.map((_, i) => 46 + 26 + i * colW);
   gridHead.style.width = gridW + "px";
   gridHead.innerHTML = "";
@@ -632,7 +630,7 @@ function renderGrid(){
       ctx.textAlign = "center";
       ctx.fillText("✂", gridW - 10, y + effRowH / 2);
     }
-    for (let t = 0; t < 4; t++){
+    for (let t = 0; t < NT; t++){
       ctx.fillStyle = cellFill(r.L[t], r.S[t]);
       ctx.fillRect(colX[t] + 1.5, y + 2.5, colW - 3, effRowH - 5);
     }
@@ -677,7 +675,7 @@ const PANEL_H = 86, PANEL_GAP = 14, TOP_PAD = 4, BOT_PAD = 24;
 let chartW = 800, chartHover = -1;
 
 function chartGeom(){
-  const H = TOP_PAD + 4 * (PANEL_H + PANEL_GAP) - PANEL_GAP + BOT_PAD;
+  const H = TOP_PAD + NT * (PANEL_H + PANEL_GAP) - PANEL_GAP + BOT_PAD;
   const x0 = 8, x1 = Math.max(x0 + 1, chartW - 8);
   return { H, x0, x1, X: i => (N <= 1 ? x0 : x0 + (x1 - x0) * (i / (N - 1))) };
 }
@@ -694,8 +692,10 @@ function drawChart(hoverI){
     ctx.fillStyle = "#fbfcfe";
     ctx.fillRect(x0, top, x1 - x0, PANEL_H);
     /* neutral band (per-tool label cutoff) */
-    ctx.fillStyle = "rgba(134,142,150,0.10)";
-    ctx.fillRect(x0, yOf(t.cutoff), x1 - x0, yOf(-t.cutoff) - yOf(t.cutoff));
+    if (t.cutoff != null){
+      ctx.fillStyle = "rgba(134,142,150,0.10)";
+      ctx.fillRect(x0, yOf(t.cutoff), x1 - x0, yOf(-t.cutoff) - yOf(t.cutoff));
+    }
     /* gridlines */
     for (const v of [-1, -0.5, 0, 0.5, 1]){
       ctx.strokeStyle = v === 0 ? "#dee2e6" : "#f1f3f5";
@@ -713,7 +713,7 @@ function drawChart(hoverI){
     ctx.font = "9.5px system-ui, sans-serif";
     ctx.fillStyle = "#adb5bd";
     ctx.textAlign = "right";
-    ctx.fillText(`neutral: |score| < ${t.cutoff}`, x1 - 6, top + 12);
+    ctx.fillText(t.cutoff == null ? "label: most likely class" : `neutral: |score| < ${t.cutoff}`, x1 - 6, top + 12);
     /* score line */
     ctx.strokeStyle = t.color;
     ctx.lineWidth = 1.4;
@@ -733,7 +733,7 @@ function drawChart(hoverI){
     ctx.lineWidth = 1;
     ctx.beginPath();
     ctx.moveTo(px, TOP_PAD);
-    ctx.lineTo(px, TOP_PAD + 4 * PANEL_H + 3 * PANEL_GAP);
+    ctx.lineTo(px, TOP_PAD + NT * PANEL_H + (NT - 1) * PANEL_GAP);
     ctx.stroke();
     TOOLS.forEach((t, k) => {
       const top = TOP_PAD + k * (PANEL_H + PANEL_GAP);
@@ -754,7 +754,7 @@ function drawChart(hoverI){
     ctx.lineWidth = 1.5;
     ctx.beginPath();
     ctx.moveTo(px, TOP_PAD);
-    ctx.lineTo(px, TOP_PAD + 4 * PANEL_H + 3 * PANEL_GAP);
+    ctx.lineTo(px, TOP_PAD + NT * PANEL_H + (NT - 1) * PANEL_GAP);
     ctx.stroke();
     TOOLS.forEach((t, k) => {
       const top = TOP_PAD + k * (PANEL_H + PANEL_GAP);
@@ -820,7 +820,7 @@ function scoreBar(t, r){
   const name = el("span", "sb-name", t.name);
   name.style.color = t.color;
   const track = el("div", "sb-track");
-  for (const c of [t.cutoff, -t.cutoff]){
+  for (const c of t.cutoff == null ? [] : [t.cutoff, -t.cutoff]){
     const cut = el("div", "sb-cut");
     cut.style.left = `calc(${50 + c * 50}% - 1px)`;
     cut.title = `${t.name} label cutoff ±${t.cutoff}`;
@@ -852,7 +852,7 @@ function openDetail(r){
   const bd = $("detail-badges");
   bd.innerHTML = "";
   if (r.tr){
-    const b = el("span", "badge", "✂ truncated: BERT / SiEBERT saw only the first 512 tokens; VADER read the whole line");
+    const b = el("span", "badge", "✂ truncated: the transformer models saw only the first 512 tokens; VADER read the whole line");
     bd.append(b);
   }
   const tx = $("detail-text");
@@ -897,6 +897,19 @@ function openDetail(r){
     bar.append(pos, neg);
     m.append(bar, el("div", "mtext", `P(positive) = ${(r.sp * 100).toFixed(1)}%`));
   }));
+  /* RoBERTa class probabilities */
+  ex.append(miniMini("RoBERTa probabilities", m => {
+    const bar = el("div", "hbar");
+    const parts = [["pos", r.rp[2], "positive"], ["neu", r.rp[1], "neutral"], ["neg", r.rp[0], "negative"]];
+    for (const [lab, v, word] of parts){
+      const seg = el("div");
+      seg.style.width = (v * 100) + "%";
+      seg.style.background = LAB[lab].color;
+      seg.title = `${word}: ${(v * 100).toFixed(1)}%`;
+      bar.append(seg);
+    }
+    m.append(bar, el("div", "mtext", `pos ${(r.rp[2] * 100).toFixed(0)}% · neu ${(r.rp[1] * 100).toFixed(0)}% · neg ${(r.rp[0] * 100).toFixed(0)}%`));
+  }));
   $("detail-agree").innerHTML = "";
   const ac = $("detail-agree");
   TOOLS.forEach((t, idx) => {
@@ -906,7 +919,7 @@ function openDetail(r){
     c.title = `${t.name}: ${r.L[idx]} (${fmt(r.S[idx])})`;
     ac.append(c);
   });
-  const note = r.all ? "all four agree" : `labels split ${r.distinct} ways`;
+  const note = r.all ? `all ${NT} agree` : `labels split ${r.distinct} ways`;
   const noteEl = el("span", null, r.all ? "✓ " + note : "⚠ " + note);
   noteEl.style.color = r.all ? "#2b8a3e" : "#c92a2a";
   noteEl.style.fontWeight = "600";
@@ -941,6 +954,11 @@ window.addEventListener("keydown", e => {
 });
 
 /* ---------- wiring ---------- */
+PAIRS.forEach(([a, b], i) => {
+  const o = el("option", null, `${TOOLS[a].name} ↔ ${TOOLS[b].name} disagree`);
+  o.value = "pair-" + i;
+  $("mode").append(o);
+});
 $("mode").addEventListener("change", e => setMode(e.target.value));
 $("search").addEventListener("input", e => { state.search = e.target.value; computeVisible(); renderGrid(); updateCount(); });
 $("sort").addEventListener("change", e => { state.sort = e.target.value; computeVisible(); renderGrid(); updateCount(); });
@@ -1008,13 +1026,16 @@ def main():
                     "vc": float(r["vader_claude_score"]),
                     "b": float(r["bert_score"]),
                     "s": float(r["siebert_score"]),
+                    "r": float(r["roberta_score"]),
                     "vl": r["vader_label"],
                     "vcl": r["vader_claude_label"],
                     "bl": r["bert_label"],
                     "sl": r["siebert_label"],
+                    "rl": r["roberta_label"],
                     "st": int(r["bert_stars"]),
                     "bp": [float(r[f"bert_p{i}"]) for i in range(1, 6)],
                     "sp": float(r["siebert_p_pos"]),
+                    "rp": [float(r[f"roberta_p_{c}"]) for c in ("neg", "neu", "pos")],
                     "vn": float(r["vader_neg"]),
                     "vu": float(r["vader_neu"]),
                     "vp": float(r["vader_pos"]),

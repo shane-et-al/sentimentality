@@ -1,7 +1,7 @@
-"""Compare out-of-the-box sentiment from VADER, BERT and SiEBERT, line by line, on a text file.
+"""Compare out-of-the-box sentiment from VADER, BERT, SiEBERT and RoBERTa, line by line, on a text file.
 
 Each line of the input file is treated as one passage. Every passage is scored
-by four tools, the per-line comparison is printed, and one row per line is
+by five tools, the per-line comparison is printed, and one row per line is
 written to a CSV:
 
     VADER: rule/lexicon-based, English-only. Reports a compound score in
@@ -16,8 +16,12 @@ written to a CSV:
     SiEBERT: siebert/sentiment-roberta-large-english, RoBERTa-large fine-tuned
         on 15 English datasets of varied text; predicts positive or negative.
         Its score is P(positive) - P(negative), in [-1, 1].
+    RoBERTa: cardiffnlp/twitter-roberta-base-sentiment-latest, RoBERTa-base
+        trained on tweets; predicts negative, neutral or positive. Its score
+        is P(positive) - P(negative), in [-1, 1], and its label is the class it
+        rates most likely rather than a cutoff on the score.
 
-Both transformer models accept at most 512 tokens, so longer lines are cut off at
+All three transformer models accept at most 512 tokens, so longer lines are cut off at
 that point and flagged in the CSV; VADER always reads the whole line. Blank lines
 are skipped.
 
@@ -46,9 +50,14 @@ from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
 INPUT_FILE = "pg5200.txt"
 BERT_MODEL = "nlptown/bert-base-multilingual-uncased-sentiment"
 SIEBERT_MODEL = "siebert/sentiment-roberta-large-english"
+ROBERTA_MODEL = "cardiffnlp/twitter-roberta-base-sentiment-latest"
+# Longest input the transformer models accept; some tokenizers don't declare it
+MAX_TOKENS = 512
 
 # (display name, CSV prefix) for each tool; each has <prefix>_score and <prefix>_label columns
-TOOLS = (("VADER", "vader"), ("VADER-C", "vader_claude"), ("BERT", "bert"), ("SiEBERT", "siebert"))
+TOOLS = (
+    ("VADER", "vader"), ("VADER-C", "vader_claude"), ("BERT", "bert"), ("SiEBERT", "siebert"), ("RoBERTa", "roberta"),
+)
 
 
 def label(score, threshold=0.05):
@@ -82,8 +91,8 @@ def classify(model, texts):
         count, in which case the pipeline truncated it.
     """
     classifier = pipeline("sentiment-analysis", model=model, top_k=None)
-    max_len = classifier.tokenizer.model_max_length
-    for text, dist in zip(texts, classifier(list(texts), truncation=True)):
+    max_len = min(classifier.tokenizer.model_max_length, MAX_TOKENS)
+    for text, dist in zip(texts, classifier(list(texts), truncation=True, max_length=max_len)):
         truncated = len(classifier.tokenizer(text, verbose=False)["input_ids"]) > max_len
         yield {d["label"]: d["score"] for d in dist}, truncated
 
@@ -123,8 +132,25 @@ def siebert_scores(texts):
         yield dist["POSITIVE"], dist["POSITIVE"] - dist["NEGATIVE"], truncated
 
 
+def roberta_scores(texts):
+    """Score texts with the Twitter RoBERTa model, normalized onto [-1, 1].
+
+    Args:
+        texts (Iterable[str]): Texts to score, in order.
+
+    Yields:
+        tuple[dict[str, float], float, str, bool]: For each text, in order: the
+        probability of each class (keys "negative", "neutral", "positive"),
+        P(positive) - P(negative) in [-1, 1], the most likely class as
+        "pos"/"neu"/"neg", and whether the text was truncated.
+    """
+    for dist, truncated in classify(ROBERTA_MODEL, texts):
+        top = max(dist, key=dist.get)
+        yield dist, dist["positive"] - dist["negative"], top[:3], truncated
+
+
 def main():
-    """Compare all four tools on every non-blank line and write the CSV.
+    """Compare all five tools on every non-blank line and write the CSV.
 
     Command-line arguments (see ``--help`` and the module docstring): an
     optional positional ``file`` names the text to score (one passage per
@@ -152,9 +178,11 @@ def main():
     vader_claude = SentimentIntensityAnalyzer(lexicon_file=os.path.abspath(args.lexicon))
     rows = []
 
-    print(f"{'line':>4}  {'VADER':>13}   {'VADER-C':>13}   {'BERT':>21}   {'SiEBERT':>13}   agree  text")
-    results = zip(line_nums, texts, bert_scores(texts), siebert_scores(texts))
-    for line, text, (probs, stars, bert_norm, bert_cut), (sie_pos, sie_norm, sie_cut) in results:
+    print(f"{'line':>4}  {'VADER':>13}   {'VADER-C':>13}   {'BERT':>21}   {'SiEBERT':>13}   {'RoBERTa':>13}"
+          f"   agree  text")
+    results = zip(line_nums, texts, bert_scores(texts), siebert_scores(texts), roberta_scores(texts))
+    for line, text, (probs, stars, bert_norm, bert_cut), (sie_pos, sie_norm, sie_cut), \
+            (rob_probs, rob_norm, r, rob_cut) in results:
         vs = vader.polarity_scores(text)
         compound = vs["compound"]
         vc_score = vader_claude.polarity_scores(text)["compound"]
@@ -163,7 +191,7 @@ def main():
         snippet = text if len(text) <= 60 else text[:57] + "..."
         print(
             f"{line:>4}  {compound:+.3f} ({v})   {vc_score:+.3f} ({vc})   {stars}★ {probs[stars]:4.0%} {bert_norm:+.3f} ({b})"
-            f"   {sie_norm:+.3f} ({s})   {'all' if v == vc == b == s else '':>5}  {snippet}"
+            f"   {sie_norm:+.3f} ({s})   {rob_norm:+.3f} ({r})   {'all' if v == vc == b == s == r else '':>5}  {snippet}"
         )
         rows.append({
             "line": line,
@@ -181,7 +209,10 @@ def main():
             "siebert_p_pos": round(sie_pos, 4),
             "siebert_score": round(sie_norm, 4),
             "siebert_label": s,
-            "truncated": bert_cut or sie_cut,
+            **{f"roberta_p_{name[:3]}": round(rob_probs[name], 4) for name in ("negative", "neutral", "positive")},
+            "roberta_score": round(rob_norm, 4),
+            "roberta_label": r,
+            "truncated": bert_cut or sie_cut or rob_cut,
         })
         row = rows[-1]
         for (_, a), (_, b_) in combinations(TOOLS, 2):
@@ -202,13 +233,13 @@ def summarize(rows):
     Prints, per tool: label counts and mean score. Then, per pair of tools:
     agreement (same label), disagreement (one said pos, the other neg), the
     remainder (at least one of the pair called the line neutral), and Spearman
-    rank correlation of the scores. Finally, how often all four tools agreed
+    rank correlation of the scores. Finally, how often all five tools agreed
     and how many lines were truncated.
 
     Args:
         rows (list[dict]): The rows collected in ``main``: one dict per line
             with ``<prefix>_score`` and ``<prefix>_label`` keys for each tool
-            (prefixes "vader", "vader_claude", "bert", "siebert"), a
+            (prefixes "vader", "vader_claude", "bert", "siebert", "roberta"), a
             boolean "truncated" key, and the line's "text".
     """
     labels = ("pos", "neu", "neg")
