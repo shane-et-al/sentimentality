@@ -13,6 +13,14 @@ header h1{margin:0;font-size:22px;letter-spacing:-.01em}
 .sub{margin:4px 0 12px;color:#868e96;font-size:13px}
 .legend{display:flex;flex-wrap:wrap;gap:8px 12px;font-size:12px;margin-bottom:14px}
 .legend .li{display:inline-flex;align-items:center;gap:6px;background:#fff;border:1px solid #e9ecef;border-radius:999px;padding:3px 10px;color:#495057}
+.legend .pick-label{font-weight:600;color:#495057;align-self:center}
+.legend button.tool{font:inherit;cursor:pointer}
+.legend button.tool:hover{border-color:#adb5bd}
+.legend button.tool .tick{width:13px;height:13px;border-radius:3px;border:1.5px solid #adb5bd;display:inline-flex;align-items:center;justify-content:center;font-size:10px;line-height:1;flex:none}
+.legend button.tool[aria-pressed=true] .tick{background:#495057;border-color:#495057;color:#fff}
+.legend button.tool[aria-pressed=false]{background:#f1f3f5;color:#adb5bd}
+.legend button.tool[aria-pressed=false] .dot{opacity:.35}
+.legend .sep{width:1px;align-self:stretch;background:#dee2e6;margin:0 2px}
 .dot{width:9px;height:9px;border-radius:50%;display:inline-block;flex:none}
 .labchip{width:14px;height:14px;border-radius:4px;display:inline-flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;flex:none}
 .cards{display:grid;gap:12px;grid-template-columns:repeat(auto-fit,minmax(290px,1fr));margin-bottom:12px;align-items:start}
@@ -130,29 +138,20 @@ canvas{display:block}
   <div class="card"><h2>Label distribution per tool</h2><div id="dist"></div><p class="note">Each tool's own cutoffs applied; <span class="mean" style="display:inline">mean = mean score.</span></p></div>
   </div>
   <div class="card wide"><h2>Pairwise agreement</h2><div id="pairs-wrap"></div><p class="note">ρ = Spearman rank correlation of the scores. Click a row to show only chunks where that pair disagrees.</p></div>
-  <div class="card"><h2>Common label patterns</h2><div id="patterns"></div><p class="note">Chunks sharing the same labels from every tool, most common first. Order: VADER, VADER-C, BERT, SiEBERT, RoBERTa. Click to filter.</p></div>
+  <div class="card"><h2>Common label patterns</h2><div id="patterns"></div><p class="note" id="patterns-note"></p></div>
 </section>
 
 <section class="card">
   <h2>Scores by chunk</h2>
   <canvas id="chart"></canvas>
-  <p class="hint">Shaded band = each tool's neutral zone (its label cutoff; RoBERTa picks its own label, so it has none). Hover for values, click a point to inspect that chunk.</p>
+  <p class="hint" id="chart-hint"></p>
 </section>
 
 <div class="workbench">
 <section class="card">
   <h2>Chunk-by-chunk</h2>
   <div class="controls">
-    <select id="mode">
-      <option value="all">All chunks</option>
-      <option value="notag">Tools disagree (any split)</option>
-      <option value="agree">All tools agree</option>
-      <option value="minority">Minority report (all but one agree)</option>
-      <option value="split2">Split exactly 2 ways</option>
-      <option value="split3">Split exactly 3 ways</option>
-      <option value="neutral">Any tool says neutral</option>
-      <option value="trunc">Truncated (over 512 tokens)</option>
-    </select>
+    <select id="mode"></select>
     <input type="search" id="search" placeholder="Search text or line number…">
     <select id="sort">
       <option value="line">Sort: line order</option>
@@ -200,19 +199,18 @@ canvas{display:block}
 const DATA = JSON.parse(document.getElementById("row-data").textContent);
 const META = JSON.parse(document.getElementById("meta-data").textContent);
 
-const TOOLS = [
-  { key:"v",  name:"VADER",   color:"#1c7ed6", cutoff:0.05, skey:"v",  lkey:"vl"  },
-  { key:"vc", name:"VADER-C", color:"#ae3ec9", cutoff:0.05, skey:"vc", lkey:"vcl" },
-  { key:"b",  name:"BERT",    color:"#e8590c", cutoff:0.2,  skey:"b",  lkey:"bl"  },
-  { key:"s",  name:"SiEBERT", color:"#0c8599", cutoff:0.5,  skey:"s",  lkey:"sl"  },
+/* tf: transformer model, limited to 512 tokens */
+const ALL_TOOLS = [
+  { key:"v",  name:"VADER",   color:"#1c7ed6", cutoff:0.05, skey:"v",  lkey:"vl",  tf:false },
+  { key:"vc", name:"VADER-C", color:"#ae3ec9", cutoff:0.05, skey:"vc", lkey:"vcl", tf:false },
+  { key:"b",  name:"BERT",    color:"#e8590c", cutoff:0.2,  skey:"b",  lkey:"bl",  tf:true  },
+  { key:"s",  name:"SiEBERT", color:"#0c8599", cutoff:0.5,  skey:"s",  lkey:"sl",  tf:true  },
   /* cutoff null: the model picks its own label, so there is no neutral zone */
-  { key:"r",  name:"RoBERTa", color:"#5f3dc4", cutoff:null, skey:"r",  lkey:"rl"  },
+  { key:"r",  name:"RoBERTa", color:"#5f3dc4", cutoff:null, skey:"r",  lkey:"rl",  tf:true  },
 ];
-const NT = TOOLS.length;
-/* a chunk can get at most this many distinct labels (there are only pos/neu/neg) */
-const SPLITS = [1, 2, 3].filter(k => k <= NT);
-const PAIRS = [];
-for (let i = 0; i < NT; i++) for (let j = i + 1; j < NT; j++) PAIRS.push([i, j]);
+const MIN_TOOLS = 2; // agreement and pairwise stats need at least two
+/* The tools currently shown, and everything derived from them; set by applyTools. */
+let TOOLS = [], NT = 0, SPLITS = [], PAIRS = [];
 
 const LAB = {
   pos: { color:"#2f9e44", chipBg:"#d3f9d8", chipFg:"#2b8a3e", fill:"47,158,68",  sym:"+", word:"positive" },
@@ -224,13 +222,24 @@ const SPLIT_EDGE = { 1:"#69b57e", 2:"#e0b400", 3:"#e06800", 4:"#e03131" };
 const SPLIT_NAME = { 1:"all agree", 2:"split 2 ways", 3:"split 3 ways", 4:"split 4 ways" };
 
 const N = DATA.length;
-for (const r of DATA) {
-  r.L = TOOLS.map(t => r[t.lkey]);
-  r.S = TOOLS.map(t => r[t.skey]);
-  r.distinct = new Set(r.L).size;
-  r.all = r.distinct === 1;
-  r.spread = Math.max(...r.S) - Math.min(...r.S);
+function applyTools(keys){
+  TOOLS = ALL_TOOLS.filter(t => keys.includes(t.key));
+  NT = TOOLS.length;
+  /* a chunk can get at most this many distinct labels (there are only pos/neu/neg) */
+  SPLITS = [1, 2, 3].filter(k => k <= NT);
+  PAIRS = [];
+  for (let i = 0; i < NT; i++) for (let j = i + 1; j < NT; j++) PAIRS.push([i, j]);
+  for (const r of DATA) {
+    r.L = TOOLS.map(t => r[t.lkey]);
+    r.S = TOOLS.map(t => r[t.skey]);
+    r.distinct = new Set(r.L).size;
+    r.all = r.distinct === 1;
+    r.spread = Math.max(...r.S) - Math.min(...r.S);
+  }
 }
+const pairMode = (a, b) => `pair-${a.key}-${b.key}`;
+const showing = key => TOOLS.some(t => t.key === key);
+const allTools = () => (NT === 2 ? "both tools" : `all ${NT} tools`);
 const byLine = new Map(DATA.map(r => [r.l, r]));
 const anyTrunc = DATA.some(r => r.tr);
 
@@ -274,7 +283,7 @@ function hideTip(){ tip.style.display = "none"; }
 
 function rowTipHTML(r){
   const snippets = r.t.length > 110 ? r.t.slice(0, 110) + "…" : r.t;
-  const split = r.all ? `all ${NT} tools agree` : `<span class="tt-split">⚠ labels split ${r.distinct} ways</span>`;
+  const split = r.all ? `${allTools()} agree` : `<span class="tt-split">⚠ labels split ${r.distinct} ways</span>`;
   return `<div class="tt-line">line ${r.l} · ${split}${r.tr ? " · ✂ truncated" : ""}</div>` +
     `<div class="tt-text">${esc(snippets)}</div>` +
     `<table class="ttt">` +
@@ -301,8 +310,9 @@ function passes(r){
     case "neutral": return r.L.includes("neu");
   }
   if (state.mode.startsWith("pair-")){
-    const [a, b] = PAIRS[+state.mode.slice(5)];
-    return r[TOOLS[a].lkey] !== r[TOOLS[b].lkey];
+    const [, a, b] = state.mode.split("-");
+    const ta = ALL_TOOLS.find(t => t.key === a), tb = ALL_TOOLS.find(t => t.key === b);
+    return r[ta.lkey] !== r[tb.lkey];
   }
   return true;
 }
@@ -314,26 +324,46 @@ function computeVisible(){
 }
 
 /* ---------- header / legend ---------- */
-function renderHeader(){
+function renderMeta(){
   const line = [];
   if (META.source) line.push(esc(META.source));
   line.push(`${N} chunks`);
   if (META.csv) line.push(`generated from ${esc(META.csv)}`);
   $("meta-line").textContent = line.join(" · ");
+}
+/* Header legend: the tool chips double as the show/hide toggles. */
+function renderLegend(){
   const lg = $("legend");
-  for (const t of TOOLS){
-    const li = el("span", "li");
+  lg.innerHTML = "";
+  lg.append(el("span", "pick-label", "Tools:"));
+  for (const t of ALL_TOOLS){
+    const on = showing(t.key);
+    const li = el("button", "li tool");
+    li.type = "button";
+    li.setAttribute("aria-pressed", on);
+    const atMin = on && NT <= MIN_TOOLS;
+    li.title = atMin ? `At least ${MIN_TOOLS} tools must stay selected` : `${on ? "Hide" : "Show"} ${t.name}`;
     const d = el("span", "dot"); d.style.background = t.color;
-    li.append(d, el("b", null, t.name), el("span", null, t.cutoff == null ? "own label" : `label cutoff ±${t.cutoff}`));
+    li.append(el("span", "tick", on ? "✓" : ""), d, el("b", null, t.name),
+              el("span", null, t.cutoff == null ? "own label" : `label cutoff ±${t.cutoff}`));
+    li.addEventListener("click", () => {
+      if (atMin) return;
+      setTools(on ? TOOLS.filter(x => x !== t).map(x => x.key) : [...TOOLS.map(x => x.key), t.key]);
+    });
     lg.append(li);
   }
+  lg.append(el("span", "sep"));
   for (const lab of ["pos", "neu", "neg"]){
     const li = el("span", "li");
     const c = el("span", "labchip"); c.style.background = LAB[lab].chipBg; c.style.color = LAB[lab].chipFg; c.textContent = LAB[lab].sym;
     li.append(c, el("span", null, LAB[lab].word));
     lg.append(li);
   }
+}
+const truncShown = () => anyTrunc && TOOLS.some(t => t.tf);
+function renderDiffLegend(){
   const dl = $("difflegend");
+  dl.innerHTML = "";
   dl.append(el("span", "d", "left gutter:"));
   const dot = el("span", "dotmini"); dot.style.background = "#868e96";
   dl.append(mkSpanWrap(dot, "dot = all labels equal"));
@@ -341,7 +371,22 @@ function renderHeader(){
     const s = el("span", "dsev"); s.style.background = SPLIT_FILL[k]; s.style.boxShadow = `inset 0 0 0 1px ${SPLIT_EDGE[k]}`;
     dl.append(mkSpanWrap(s, `${SPLIT_NAME[k]}`));
   }
-  if (anyTrunc) dl.append(el("span", "d", "✂ = transformer saw only the first 512 tokens"));
+  if (truncShown()) dl.append(el("span", "d", "✂ = transformer saw only the first 512 tokens"));
+}
+/* Chunk filter options depend on how many tools are shown and which. */
+function renderModeOptions(){
+  const opts = [["all", "All chunks"], ["notag", "Tools disagree (any split)"], ["agree", `${allTools()[0].toUpperCase()}${allTools().slice(1)} agree`]];
+  if (NT >= 3) opts.push(["minority", `Minority report (${NT - 1} agree, 1 differs)`]);
+  opts.push(["split2", "Split exactly 2 ways"]);
+  if (NT >= 3) opts.push(["split3", "Split exactly 3 ways"]);
+  opts.push(["neutral", "Any tool says neutral"]);
+  if (truncShown()) opts.push(["trunc", "Truncated (over 512 tokens)"]);
+  for (const [a, b] of PAIRS) opts.push([pairMode(TOOLS[a], TOOLS[b]), `${TOOLS[a].name} ↔ ${TOOLS[b].name} disagree`]);
+  const sel = $("mode");
+  sel.innerHTML = "";
+  for (const [v, text] of opts){ const o = el("option", null, text); o.value = v; sel.append(o); }
+  if (!opts.some(([v]) => v === state.mode)) state.mode = "all";
+  sel.value = state.mode;
 }
 function mkSpanWrap(swatch, text){ const w = el("span", "d"); w.append(swatch, el("span", null, text)); return w; }
 
@@ -358,15 +403,17 @@ function renderAgreement(){
   const ag = $("agreement");
   ag.innerHTML = "";
   const big = el("div");
-  big.append(el("span", "big", pctText(counts[1], N)), el("span", "bigsub", ` of chunks — all ${NT} tools give the same label (${counts[1]} of ${N})`));
-  const minSpan = el("span", "bigsub");
-  minSpan.style.display = "block";
-  const minBtn = el("a");
-  minBtn.href = "#";
-  minBtn.textContent = `${minority} minority report${minority === 1 ? "" : "s"} — ${NT - 1} tools agree, 1 differs`;
-  minBtn.addEventListener("click", e => { e.preventDefault(); setMode("minority"); });
-  minSpan.append(minBtn);
-  big.append(minSpan);
+  big.append(el("span", "big", pctText(counts[1], N)), el("span", "bigsub", ` of chunks — ${allTools()} give the same label (${counts[1]} of ${N})`));
+  if (NT >= 3){ // with two tools, "all but one agree" is just disagreement
+    const minSpan = el("span", "bigsub");
+    minSpan.style.display = "block";
+    const minBtn = el("a");
+    minBtn.href = "#";
+    minBtn.textContent = `${minority} minority report${minority === 1 ? "" : "s"} — ${NT - 1} tools agree, 1 differs`;
+    minBtn.addEventListener("click", e => { e.preventDefault(); setMode("minority"); });
+    minSpan.append(minBtn);
+    big.append(minSpan);
+  }
   ag.append(big);
   const bar = el("div", "segbar");
   for (const k of SPLITS){
@@ -464,7 +511,7 @@ function renderPairs(){
       `<td>${agree} (${pctText(agree, N)})</td><td>${opp}</td>` +
       `<td>${N - agree - opp}</td><td>${isNaN(rho) ? "—" : (rho >= 0 ? "+" : "") + rho.toFixed(2)}</td>`;
     tr.title = `Show only chunks where ${ta.name} and ${tb2.name} disagree`;
-    tr.addEventListener("click", () => setMode("pair-" + PAIRS.findIndex(p => p[0] === a && p[1] === b)));
+    tr.addEventListener("click", () => setMode(pairMode(ta, tb2)));
     tb.append(tr);
   }
   table.append(tb);
@@ -504,6 +551,12 @@ function renderPatterns(){
     });
     host.append(btn);
   }
+  const own = TOOLS.filter(t => t.cutoff == null).map(t => t.name);
+  $("chart-hint").textContent = "Shaded band = each tool's neutral zone (its label cutoff" +
+    (own.length ? `; ${own.join(" and ")} pick${own.length === 1 ? "s" : ""} ${own.length === 1 ? "its" : "their"} own label, so ${own.length === 1 ? "it has" : "they have"} none` : "") +
+    "). Hover for values, click a point to inspect that chunk.";
+  $("patterns-note").textContent =
+    `Chunks sharing the same labels from every shown tool, most common first. Order: ${TOOLS.map(t => t.name).join(", ")}. Click to filter.`;
 }
 
 /* ---------- controls ---------- */
@@ -555,7 +608,7 @@ function rowHeightFor(rows){
 function layoutGrid(){
   gridW = Math.max(320, gridScroll.clientWidth);
   effRowH = rowHeightFor(visible);
-  const truncW = anyTrunc ? 18 : 0;
+  const truncW = truncShown() ? 18 : 0;
   const body = gridW - 46 - 26 - truncW;
   colW = body / NT;
   colX = TOOLS.map((_, i) => 46 + 26 + i * colW);
@@ -612,7 +665,7 @@ function renderGrid(){
       ctx.lineWidth = 1;
       ctx.stroke();
     }
-    if (r.tr && anyTrunc){
+    if (r.tr && truncShown()){
       ctx.fillStyle = "#7048e8";
       ctx.textAlign = "center";
       ctx.fillText("✂", gridW - 10, y + effRowH / 2);
@@ -838,7 +891,7 @@ function openDetail(r){
   $("detail-title").textContent = "line " + r.l;
   const bd = $("detail-badges");
   bd.innerHTML = "";
-  if (r.tr){
+  if (r.tr && truncShown()){
     const b = el("span", "badge", "✂ truncated: the transformer models saw only the first 512 tokens; VADER read the whole line");
     bd.append(b);
   }
@@ -850,7 +903,7 @@ function openDetail(r){
   const ex = $("detail-extras");
   ex.innerHTML = "";
   /* BERT stars */
-  ex.append(miniMini("BERT star probabilities", m => {
+  if (showing("b")) ex.append(miniMini("BERT star probabilities", m => {
     const wrap = el("div", "starrow");
     const mx = Math.max(...r.bp, 0.05);
     for (let i = 1; i <= 5; i++){
@@ -864,7 +917,7 @@ function openDetail(r){
     m.append(wrap, el("div", "mtext", `top: ${r.st}★ (${(r.bp[r.st - 1] * 100).toFixed(0)}%)`));
   }));
   /* VADER shares */
-  ex.append(miniMini("VADER word shares", m => {
+  if (showing("v")) ex.append(miniMini("VADER word shares", m => {
     const bar = el("div", "hbar");
     const parts = [["pos", r.vp, "positive words"], ["neu", r.vu, "neutral"], ["neg", r.vn, "negative words"]];
     for (const [lab, v, word] of parts){
@@ -877,7 +930,7 @@ function openDetail(r){
     m.append(bar, el("div", "mtext", `pos ${(r.vp * 100).toFixed(0)}% · neu ${(r.vu * 100).toFixed(0)}% · neg ${(r.vn * 100).toFixed(0)}%`));
   }));
   /* SiEBERT certainty */
-  ex.append(miniMini("SiEBERT certainty", m => {
+  if (showing("s")) ex.append(miniMini("SiEBERT certainty", m => {
     const bar = el("div", "hbar");
     const pos = el("div"); pos.style.width = (r.sp * 100) + "%"; pos.style.background = LAB.pos.color;
     const neg = el("div"); neg.style.width = ((1 - r.sp) * 100) + "%"; neg.style.background = LAB.neg.color;
@@ -885,7 +938,7 @@ function openDetail(r){
     m.append(bar, el("div", "mtext", `P(positive) = ${(r.sp * 100).toFixed(1)}%`));
   }));
   /* RoBERTa class probabilities */
-  ex.append(miniMini("RoBERTa probabilities", m => {
+  if (showing("r")) ex.append(miniMini("RoBERTa probabilities", m => {
     const bar = el("div", "hbar");
     const parts = [["pos", r.rp[2], "positive"], ["neu", r.rp[1], "neutral"], ["neg", r.rp[0], "negative"]];
     for (const [lab, v, word] of parts){
@@ -906,7 +959,7 @@ function openDetail(r){
     c.title = `${t.name}: ${r.L[idx]} (${fmt(r.S[idx])})`;
     ac.append(c);
   });
-  const note = r.all ? `all ${NT} agree` : `labels split ${r.distinct} ways`;
+  const note = r.all ? `${allTools()} agree` : `labels split ${r.distinct} ways`;
   const noteEl = el("span", null, r.all ? "✓ " + note : "⚠ " + note);
   noteEl.style.color = r.all ? "#2b8a3e" : "#c92a2a";
   noteEl.style.fontWeight = "600";
@@ -941,11 +994,6 @@ window.addEventListener("keydown", e => {
 });
 
 /* ---------- wiring ---------- */
-PAIRS.forEach(([a, b], i) => {
-  const o = el("option", null, `${TOOLS[a].name} ↔ ${TOOLS[b].name} disagree`);
-  o.value = "pair-" + i;
-  $("mode").append(o);
-});
 $("mode").addEventListener("change", e => setMode(e.target.value));
 $("search").addEventListener("input", e => { state.search = e.target.value; computeVisible(); renderGrid(); updateCount(); });
 $("sort").addEventListener("change", e => { state.sort = e.target.value; computeVisible(); renderGrid(); updateCount(); });
@@ -961,16 +1009,38 @@ function layoutAll(){
 }
 window.addEventListener("resize", debounce(layoutAll, 150));
 
-renderHeader();
-renderAgreement();
-renderDist();
-renderPairs();
-renderPatterns();
-updatePill();
-layoutAll();
-computeVisible();
-renderGrid();
-updateCount();
+/* ---------- tool selection ---------- */
+const TOOLS_KEY = "sentiment-comparison-tools";
+function savedTools(){
+  try {
+    const keys = JSON.parse(localStorage.getItem(TOOLS_KEY));
+    if (Array.isArray(keys)){
+      const valid = keys.filter(k => ALL_TOOLS.some(t => t.key === k));
+      if (valid.length >= MIN_TOOLS) return valid;
+    }
+  } catch (e) { /* storage blocked or unreadable: show every tool */ }
+  return ALL_TOOLS.map(t => t.key);
+}
+function setTools(keys){
+  try { localStorage.setItem(TOOLS_KEY, JSON.stringify(keys)); } catch (e) { /* not remembered */ }
+  applyTools(keys);
+  state.pattern = null; // a pattern lists one label per tool, so it no longer applies
+  renderLegend();
+  renderDiffLegend();
+  renderModeOptions();
+  renderAgreement();
+  renderDist();
+  renderPairs();
+  renderPatterns();
+  updatePill();
+  computeVisible();
+  layoutAll();
+  updateCount();
+  if (selectedLine != null) openDetail(byLine.get(selectedLine));
+}
+
+renderMeta();
+setTools(savedTools());
 </script>
 </body>
 </html>

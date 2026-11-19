@@ -33,6 +33,10 @@ uv run python make_html.py --source pg5200.txt --open   # label the source in th
 
 Writes a single self-contained HTML file (no internet or libraries needed) with:
 
+- A tool picker in the header: click a tool to hide or show it. Every card,
+  the chart, the chunk list and its filter options are recalculated for the
+  tools shown. At least two stay selected, and the choice is remembered in
+  your browser.
 - Summary cards: how often the tools agree, per-tool label distributions,
   pairwise agreement/opposition/rank-correlation, and the most common
   whole-chunk label patterns. Click any of them to filter the chunk list.
