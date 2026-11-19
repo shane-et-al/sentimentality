@@ -2,7 +2,7 @@
 
 Sentiment analysis tool comparison and visualization. 
 
-By default, the file is `pg5200.txt`, David Wyllie's translation of Franz Kafka's *The Metamorphosis* from Project Gutenberg, edited to contain one sentence per line/chunk to avoid the transformer models' token limits. To shake things up, `pg5200-3.txt`, a three-sentence per line text file is included but not used that gives each chunk more context.
+By default, the file is `metamorphosis.txt`, David Wyllie's translation of Franz Kafka's *The Metamorphosis* from Project Gutenberg (pg5200), edited to contain one sentence per line/chunk to avoid the transformer models' token limits.
 
 - **VADER**: a rule- and word-list-based scorer. English only.
 - **VADER-C**: VADER with its word ratings replaced by those in `VADER-C_lexicon.txt`. It has the same 7,506 words and the same rules, with different ratings for most words.
@@ -13,35 +13,35 @@ By default, the file is `pg5200.txt`, David Wyllie's translation of Franz Kafka'
 ## Usage
 
 ```sh
-uv run python compare_sentiment.py                  # compare each line of pg5200.txt
-uv run python compare_sentiment.py other.txt        # compare each line of another file
+uv run python compare_sentiment.py                  # compare each line of metamorphosis.txt
+uv run python compare_sentiment.py other.txt        # compare each line of another file, writing other.json
 uv run python compare_sentiment.py --json out.json  # write the results somewhere else
 uv run python compare_sentiment.py --lexicon x.txt  # use another lexicon for VADER-C
 ```
 
-Blank lines are skipped. The script prints a summary table and writes the results to `sentiment_comparison.json`, one row per line of text. Each run overwrites the file.
+Blank lines are skipped. The script prints a summary table and writes the results to a JSON file named after the input (`metamorphosis.txt` → `metamorphosis.json`), one row per line of text. Each run overwrites the file.
 
 BERT, SiEBERT and RoBERTa can read at most 512 tokens (roughly 350–400 English words), so for longer lines they only see the beginning. These lines are marked with `truncated`. VADER always reads the whole line.
 
 ## Visualization
 
-`index.html` is a static page that loads a results file and displays it. It reads the file named in the `data` URL parameter, and `sentiment_comparison.json` when there is none:
+`index.html` is a static page that loads a results file and displays it. It reads the file named in the `data` URL parameter, and `metamorphosis.json` when there is none:
 
 ```
-index.html                         # shows sentiment_comparison.json
-index.html?data=pg5200-3.json      # shows another results file
+index.html                    # shows metamorphosis.json
+index.html?data=other.json    # shows another results file
 ```
 
 Browsers don't let a page opened straight from disk read other files, so serve the folder, for example on GitHub Pages or locally:
 
 ```sh
-python3 -m http.server     # then open http://localhost:8000/?data=sentiment_comparison.json
+python3 -m http.server     # then open http://localhost:8000/
 ```
 
 To show another text, write its results to a new file and point the page at it:
 
 ```sh
-uv run python compare_sentiment.py pg5200-3.txt --json pg5200-3.json
+uv run python compare_sentiment.py other.txt    # writes other.json
 ```
 
 The page has:

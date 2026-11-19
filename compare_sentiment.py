@@ -26,8 +26,8 @@ that point and flagged in the JSON; VADER always reads the whole line. Blank lin
 are skipped.
 
 Examples:
-    Compare each line of pg5200.txt (the default), writing
-    sentiment_comparison.json::
+    Compare each line of metamorphosis.txt (the default), writing
+    metamorphosis.json::
 
         python compare_sentiment.py
 
@@ -47,7 +47,7 @@ from statistics import correlation, mean
 from transformers import pipeline
 from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
 
-INPUT_FILE = "pg5200.txt"
+INPUT_FILE = "metamorphosis.txt"
 BERT_MODEL = "nlptown/bert-base-multilingual-uncased-sentiment"
 SIEBERT_MODEL = "siebert/sentiment-roberta-large-english"
 ROBERTA_MODEL = "cardiffnlp/twitter-roberta-base-sentiment-latest"
@@ -154,8 +154,9 @@ def main():
 
     Command-line arguments (see ``--help`` and the module docstring): an
     optional positional ``file`` names the text to score (one passage per
-    line, default pg5200.txt), ``--json`` sets the JSON output path (default
-    sentiment_comparison.json, overwritten on every run), and ``--lexicon``
+    line, default metamorphosis.txt), ``--json`` sets the JSON output path
+    (default: the input's name with a .json extension, overwritten on every
+    run), and ``--lexicon``
     sets the word ratings used for VADER-C (default VADER-C_lexicon.txt).
 
     Prints a per-line comparison table, writes the JSON (see the README for
@@ -167,9 +168,11 @@ def main():
     """
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("file", nargs="?", default=INPUT_FILE, help="text file, one passage per line")
-    parser.add_argument("--json", default="sentiment_comparison.json", help="JSON output path")
+    parser.add_argument("--json", help="JSON output path (default: the input file's name, ending .json)")
     parser.add_argument("--lexicon", default="VADER-C_lexicon.txt", help="word ratings for VADER-C")
     args = parser.parse_args()
+    if args.json is None:
+        args.json = os.path.splitext(args.file)[0] + ".json"
 
     with open(args.file, encoding="utf-8") as f:
         numbered = [(n, line.strip()) for n, line in enumerate(f, 1) if line.strip()]

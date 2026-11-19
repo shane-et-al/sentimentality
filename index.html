@@ -200,7 +200,7 @@ canvas{display:block}
 <script id="page-js">
 "use strict";
 /* The results file to show: ?data=<path or URL>, as written by compare_sentiment.py */
-const DATA_URL = new URLSearchParams(location.search).get("data") || "sentiment_comparison.json";
+const DATA_URL = new URLSearchParams(location.search).get("data") || "metamorphosis.json";
 /* Rows and file metadata; set by load() */
 let DATA = [], META = {}, N = 0, byLine = new Map(), anyTrunc = false;
 
@@ -1082,7 +1082,7 @@ function showLoadError(err){
       "run <code>python3 -m http.server</code> here and open <code>http://localhost:8000/</code>.";
   else
     help.innerHTML = "Name a results file written by <code>compare_sentiment.py</code> with " +
-      "<code>?data=</code>, for example <code>?data=sentiment_comparison.json</code>.";
+      "<code>?data=</code>, for example <code>?data=metamorphosis.json</code>.";
   box.append(help);
   box.hidden = false;
 }
