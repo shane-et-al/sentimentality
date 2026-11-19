@@ -11,7 +11,11 @@ body{margin:0;background:#f8f9fa;color:#212529;font:14px/1.45 system-ui,-apple-s
 .wrap{max-width:1920px;margin:0 auto;padding:16px 18px 40px}
 header h1{margin:0;font-size:22px;letter-spacing:-.01em}
 .sub{margin:4px 0 12px;color:#868e96;font-size:13px}
-.legend{display:flex;flex-wrap:wrap;gap:8px 12px;font-size:12px;margin-bottom:14px}
+.toolbar{display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px;margin-bottom:14px;font-size:12px}
+/* the tool chips and the README link wrap together as one row */
+.legend{display:contents}
+.readme{display:inline-flex;align-items:center;gap:4px;background:#fff;border:1px solid #dee2e6;border-radius:999px;padding:3px 12px;font-size:12px;font-weight:600;color:#1971c2;text-decoration:none}
+.readme:hover{background:#e7f5ff;border-color:#74c0fc}
 .legend .li{display:inline-flex;align-items:center;gap:6px;background:#fff;border:1px solid #e9ecef;border-radius:999px;padding:3px 10px;color:#495057}
 .legend .pick-label{font-weight:600;color:#495057;align-self:center}
 .legend button.tool{font:inherit;cursor:pointer}
@@ -20,9 +24,7 @@ header h1{margin:0;font-size:22px;letter-spacing:-.01em}
 .legend button.tool[aria-pressed=true] .tick{background:#495057;border-color:#495057;color:#fff}
 .legend button.tool[aria-pressed=false]{background:#f1f3f5;color:#adb5bd}
 .legend button.tool[aria-pressed=false] .dot{opacity:.35}
-.legend .sep{width:1px;align-self:stretch;background:#dee2e6;margin:0 2px}
 .dot{width:9px;height:9px;border-radius:50%;display:inline-block;flex:none}
-.labchip{width:14px;height:14px;border-radius:4px;display:inline-flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;flex:none}
 .cards{display:grid;gap:12px;grid-template-columns:repeat(auto-fit,minmax(290px,1fr));margin-bottom:12px;align-items:start}
 .stack{display:flex;flex-direction:column;gap:12px}
 .card{background:#fff;border:1px solid #e9ecef;border-radius:12px;padding:13px 15px;box-shadow:0 1px 2px rgba(0,0,0,.03)}
@@ -52,6 +54,8 @@ table.pairs tbody tr:hover{background:#f8f9fa}
 .pat:hover{background:#f8f9fa}
 .pat-chips{display:inline-flex;gap:3px}
 .chip{width:25px;height:17px;border-radius:4px;display:inline-flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;flex:none}
+.labkey{display:flex;gap:14px;flex-wrap:wrap;font-size:11.5px;color:#495057;margin-bottom:4px}
+.labkey>span{display:inline-flex;align-items:center;gap:5px}
 .pat-n{margin-left:auto;color:#868e96;font-variant-numeric:tabular-nums;white-space:nowrap}
 .controls{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:9px}
 .controls select,.controls input[type=search]{font:inherit;font-size:12.5px;padding:5px 8px;border:1px solid #dee2e6;border-radius:8px;background:#fff;color:inherit}
@@ -115,7 +119,7 @@ canvas{display:block}
 @media (min-width:1200px){
   header{display:flex;align-items:baseline;gap:6px 18px;flex-wrap:wrap;margin-bottom:12px}
   header .sub{margin:0}
-  header .legend{margin:0 0 0 auto}
+  header .toolbar{flex-basis:100%;margin:0}
   .cards{grid-template-columns:minmax(320px,1fr) minmax(540px,1.45fr) minmax(300px,1fr)}
   .workbench{display:grid;grid-template-columns:minmax(0,1fr) 440px;gap:12px;align-items:start}
   .workbench>.card{min-width:0}
@@ -132,7 +136,10 @@ canvas{display:block}
 <header>
   <h1>Sentiment tool comparison</h1>
   <p class="sub" id="meta-line"></p>
-  <div class="legend" id="legend"></div>
+  <div class="toolbar">
+    <div class="legend" id="legend"></div>
+    <a class="readme" href="https://github.com/shane-et-al/sentimentality/blob/main/README.md" target="_blank" rel="noopener">README ↗</a>
+  </div>
 </header>
 
 <div class="card" id="load-error" hidden></div>
@@ -144,7 +151,7 @@ canvas{display:block}
   <div class="card"><h2>Label distribution per tool</h2><div id="dist"></div><p class="note">Each tool's own cutoffs applied; <span class="mean" style="display:inline">mean = mean score.</span></p></div>
   </div>
   <div class="card wide"><h2>Pairwise agreement</h2><div id="pairs-wrap"></div><p class="note">ρ = Spearman rank correlation of the scores. Click a row to show only chunks where that pair disagrees.</p></div>
-  <div class="card"><h2>Common label patterns</h2><div id="patterns"></div><p class="note" id="patterns-note"></p></div>
+  <div class="card"><h2>Common label patterns</h2><div class="labkey" id="labkey"></div><div id="patterns"></div><p class="note" id="patterns-note"></p></div>
 </section>
 
 <section class="card">
@@ -357,12 +364,15 @@ function renderLegend(){
     });
     lg.append(li);
   }
-  lg.append(el("span", "sep"));
+}
+/* Key to the label chips, shown above the patterns that use them */
+function renderLabelKey(){
+  const key = $("labkey");
   for (const lab of ["pos", "neu", "neg"]){
-    const li = el("span", "li");
-    const c = el("span", "labchip"); c.style.background = LAB[lab].chipBg; c.style.color = LAB[lab].chipFg; c.textContent = LAB[lab].sym;
-    li.append(c, el("span", null, LAB[lab].word));
-    lg.append(li);
+    const k = el("span");
+    const c = el("span", "chip"); c.style.background = LAB[lab].chipBg; c.style.color = LAB[lab].chipFg; c.textContent = LAB[lab].sym;
+    k.append(c, el("span", null, LAB[lab].word));
+    key.append(k);
   }
 }
 const truncShown = () => anyTrunc && TOOLS.some(t => t.tf);
@@ -1124,6 +1134,7 @@ async function load(){
   anyTrunc = DATA.some(r => r.tr);
   $("app").hidden = false; // before setTools, which measures the layout
   renderMeta();
+  renderLabelKey();
   setTools(savedTools());
 }
 load();
