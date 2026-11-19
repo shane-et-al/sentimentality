@@ -1,8 +1,8 @@
 """Compare out-of-the-box sentiment from VADER, BERT, SiEBERT and RoBERTa, line by line, on a text file.
 
 Each line of the input file is treated as one passage. Every passage is scored
-by five tools, the per-line comparison is printed, and one row per line is
-written to a CSV:
+by five tools, the per-line comparison is printed, and the results are written
+to a JSON file, one row per line, for index.html to display:
 
     VADER: rule/lexicon-based, English-only. Reports a compound score in
         [-1, 1]; the conventional cutoffs are >= 0.05 positive, <= -0.05
@@ -22,23 +22,23 @@ written to a CSV:
         rates most likely rather than a cutoff on the score.
 
 All three transformer models accept at most 512 tokens, so longer lines are cut off at
-that point and flagged in the CSV; VADER always reads the whole line. Blank lines
+that point and flagged in the JSON; VADER always reads the whole line. Blank lines
 are skipped.
 
 Examples:
     Compare each line of pg5200.txt (the default), writing
-    sentiment_comparison.csv::
+    sentiment_comparison.json::
 
         python compare_sentiment.py
 
-    Compare another file, choosing where the CSV goes and which word ratings
+    Compare another file, choosing where the JSON goes and which word ratings
     to use for VADER-C::
 
-        python compare_sentiment.py other.txt --csv out.csv --lexicon x.txt
+        python compare_sentiment.py other.txt --json out.json --lexicon x.txt
 """
 
 import argparse
-import csv
+import json
 import os
 from collections import Counter
 from itertools import combinations
@@ -54,7 +54,7 @@ ROBERTA_MODEL = "cardiffnlp/twitter-roberta-base-sentiment-latest"
 # Longest input the transformer models accept; some tokenizers don't declare it
 MAX_TOKENS = 512
 
-# (display name, CSV prefix) for each tool; each has <prefix>_score and <prefix>_label columns
+# (display name, JSON key) for each tool; each row has <key>.score and <key>.label
 TOOLS = (
     ("VADER", "vader"), ("VADER-C", "vader_claude"), ("BERT", "bert"), ("SiEBERT", "siebert"), ("RoBERTa", "roberta"),
 )
@@ -150,23 +150,24 @@ def roberta_scores(texts):
 
 
 def main():
-    """Compare all five tools on every non-blank line and write the CSV.
+    """Compare all five tools on every non-blank line and write the JSON.
 
     Command-line arguments (see ``--help`` and the module docstring): an
     optional positional ``file`` names the text to score (one passage per
-    line, default pg5200.txt), ``--csv`` sets the CSV output path (default
-    sentiment_comparison.csv, overwritten on every run), and ``--lexicon``
+    line, default pg5200.txt), ``--json`` sets the JSON output path (default
+    sentiment_comparison.json, overwritten on every run), and ``--lexicon``
     sets the word ratings used for VADER-C (default VADER-C_lexicon.txt).
 
-    Prints a per-line comparison table, writes the CSV, then prints a summary
-    of label counts and pairwise agreement (see ``summarize``).
+    Prints a per-line comparison table, writes the JSON (see the README for
+    its format), then prints a summary of label counts and pairwise agreement
+    (see ``summarize``).
 
     Raises:
         FileNotFoundError: If the input file or the VADER-C lexicon does not exist.
     """
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("file", nargs="?", default=INPUT_FILE, help="text file, one passage per line")
-    parser.add_argument("--csv", default="sentiment_comparison.csv", help="CSV output path")
+    parser.add_argument("--json", default="sentiment_comparison.json", help="JSON output path")
     parser.add_argument("--lexicon", default="VADER-C_lexicon.txt", help="word ratings for VADER-C")
     args = parser.parse_args()
 
@@ -195,35 +196,24 @@ def main():
         )
         rows.append({
             "line": line,
-            "vader_score": compound,
-            "vader_neg": vs["neg"],
-            "vader_neu": vs["neu"],
-            "vader_pos": vs["pos"],
-            "vader_label": v,
-            "vader_claude_score": vc_score,
-            "vader_claude_label": vc,
-            "bert_stars": stars,
-            **{f"bert_p{n}": round(probs[n], 4) for n in range(1, 6)},
-            "bert_score": round(bert_norm, 4),
-            "bert_label": b,
-            "siebert_p_pos": round(sie_pos, 4),
-            "siebert_score": round(sie_norm, 4),
-            "siebert_label": s,
-            **{f"roberta_p_{name[:3]}": round(rob_probs[name], 4) for name in ("negative", "neutral", "positive")},
-            "roberta_score": round(rob_norm, 4),
-            "roberta_label": r,
+            "text": text,
             "truncated": bert_cut or sie_cut or rob_cut,
+            "vader": {"score": compound, "label": v, "neg": vs["neg"], "neu": vs["neu"], "pos": vs["pos"]},
+            "vader_claude": {"score": vc_score, "label": vc},
+            "bert": {"score": round(bert_norm, 4), "label": b, "stars": stars,
+                     "probs": [round(probs[n], 4) for n in range(1, 6)]},
+            "siebert": {"score": round(sie_norm, 4), "label": s, "p_pos": round(sie_pos, 4)},
+            "roberta": {"score": round(rob_norm, 4), "label": r,
+                        "probs": {name[:3]: round(rob_probs[name], 4) for name in ("negative", "neutral", "positive")}},
         })
-        row = rows[-1]
-        for (_, a), (_, b_) in combinations(TOOLS, 2):
-            row[f"agree_{a}_{b_}"] = row[f"{a}_label"] == row[f"{b_}_label"]
-        row["text"] = text
 
-    with open(args.csv, "w", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=rows[0].keys())
-        writer.writeheader()
-        writer.writerows(rows)
-    print(f"\nWrote {len(rows)} rows to {args.csv}")
+    # One row per line of the file, so the output stays readable and diffs cleanly
+    with open(args.json, "w", encoding="utf-8") as f:
+        f.write(f'{{"source": {json.dumps(os.path.basename(args.file))}, '
+                f'"lexicon": {json.dumps(os.path.basename(args.lexicon))}, "rows": [\n')
+        f.write(",\n".join(json.dumps(row, ensure_ascii=False) for row in rows))
+        f.write("\n]}\n")
+    print(f"\nWrote {len(rows)} rows to {args.json}")
     summarize(rows)
 
 
@@ -238,30 +228,30 @@ def summarize(rows):
 
     Args:
         rows (list[dict]): The rows collected in ``main``: one dict per line
-            with ``<prefix>_score`` and ``<prefix>_label`` keys for each tool
-            (prefixes "vader", "vader_claude", "bert", "siebert", "roberta"), a
-            boolean "truncated" key, and the line's "text".
+            with a "score" and "label" for each tool under its key ("vader",
+            "vader_claude", "bert", "siebert", "roberta"), a boolean
+            "truncated" key, and the line's "text".
     """
     labels = ("pos", "neu", "neg")
 
     print(f"\nSummary of {len(rows)} lines")
     print(f"  {'':8}{'pos':>5}{'neu':>5}{'neg':>5}   mean score")
     for name, key in TOOLS:
-        counts = Counter(r[f"{key}_label"] for r in rows)
+        counts = Counter(r[key]["label"] for r in rows)
         print(f"  {name:8}" + "".join(f"{counts[l]:>5}" for l in labels)
-              + f"   {mean(r[f'{key}_score'] for r in rows):+.3f}")
+              + f"   {mean(r[key]['score'] for r in rows):+.3f}")
 
     print(f"\n  {'':19}{'agree':>11}{'opposite':>10}{'one neutral':>13}{'rank corr':>11}")
     for (a_name, a), (b_name, b) in combinations(TOOLS, 2):
-        pairs = Counter((r[f"{a}_label"], r[f"{b}_label"]) for r in rows)
+        pairs = Counter((r[a]["label"], r[b]["label"]) for r in rows)
         agree = sum(pairs[l, l] for l in labels)
         opposite = pairs["pos", "neg"] + pairs["neg", "pos"]
-        corr = (f"{correlation([r[f'{a}_score'] for r in rows], [r[f'{b}_score'] for r in rows], method='ranked'):+.2f}"
+        corr = (f"{correlation([r[a]['score'] for r in rows], [r[b]['score'] for r in rows], method='ranked'):+.2f}"
                 if len(rows) > 1 else "")
         print(f"  {a_name + ' / ' + b_name:19}{agree:>5} ({agree / len(rows):3.0%}){opposite:>10}"
               f"{len(rows) - agree - opposite:>13}{corr:>11}")
 
-    all_agree = sum(len({r[f"{key}_label"] for _, key in TOOLS}) == 1 for r in rows)
+    all_agree = sum(len({r[key]["label"] for _, key in TOOLS}) == 1 for r in rows)
     print(f"\n  All agree:        {all_agree} of {len(rows)} ({all_agree / len(rows):.0%})")
     truncated = sum(r["truncated"] for r in rows)
     if truncated:
