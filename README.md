@@ -32,6 +32,10 @@ index.html                    # shows metamorphosis.json
 index.html?data=other.json    # shows another results file
 ```
 
+The default is the Kafka, but also included is Project Gutenberg's copy of Shakespeare's Much Ado About Nothing, edited to remove all non-dialog and place one speech to a line.
+
+This can be accessed by passing in the flag: `index.html?data=much_ado.json`.
+
 Browsers don't let a page opened straight from disk read other files, so serve the folder, for example on GitHub Pages or locally:
 
 ```sh
