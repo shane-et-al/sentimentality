@@ -1,7 +1,7 @@
-"""Compare out-of-the-box sentiment from VADER, BERT, SiEBERT and RoBERTa, line by line, on a text file.
+"""Compare out-of-the-box sentiment from VADER, NRC, BERT, RoBERTa and SiEBERT, line by line, on a text file.
 
 Each line of the input file is treated as one passage. Every passage is scored
-by five tools, the per-line comparison is printed, and the results are written
+by six tools, the per-line comparison is printed, and the results are written
 to a JSON file, one row per line, for index.html to display:
 
     VADER: rule/lexicon-based, English-only. Reports a compound score in
@@ -9,20 +9,23 @@ to a JSON file, one row per line, for index.html to display:
         negative.
     VADER-C: VADER's rules with the word ratings from VADER-C_lexicon.txt
         instead of VADER's built-in lexicon.
+    NRC: the NRC Emotion Lexicon's positive/negative word lists, via NRCLex.
+        Its score is (positive words - negative words) / (positive words +
+        negative words), in [-1, 1], and 0 when the line has neither.
     BERT: nlptown/bert-base-multilingual-uncased-sentiment, predicts 1-5 stars.
         To compare against VADER, the star probabilities are collapsed into an
         expected star rating and mapped linearly onto [-1, 1] (1★ -> -1,
         3★ -> 0, 5★ -> +1).
-    SiEBERT: siebert/sentiment-roberta-large-english, RoBERTa-large fine-tuned
-        on 15 English datasets of varied text; predicts positive or negative.
-        Its score is P(positive) - P(negative), in [-1, 1].
     RoBERTa: cardiffnlp/twitter-roberta-base-sentiment-latest, RoBERTa-base
         trained on tweets; predicts negative, neutral or positive. Its score
         is P(positive) - P(negative), in [-1, 1], and its label is the class it
         rates most likely rather than a cutoff on the score.
+    SiEBERT: siebert/sentiment-roberta-large-english, RoBERTa-large fine-tuned
+        on 15 English datasets of varied text; predicts positive or negative.
+        Its score is P(positive) - P(negative), in [-1, 1].
 
 All three transformer models accept at most 512 tokens, so longer lines are cut off at
-that point and flagged in the JSON; VADER always reads the whole line. Blank lines
+that point and flagged in the JSON; VADER and NRC always read the whole line. Blank lines
 are skipped.
 
 Examples:
@@ -44,6 +47,8 @@ from collections import Counter
 from itertools import combinations
 from statistics import correlation, mean
 
+from nrclex import NRCLex
+from textblob import TextBlob
 from transformers import pipeline
 from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
 
@@ -56,7 +61,8 @@ MAX_TOKENS = 512
 
 # (display name, JSON key) for each tool; each row has <key>.score and <key>.label
 TOOLS = (
-    ("VADER", "vader"), ("VADER-C", "vader_claude"), ("BERT", "bert"), ("SiEBERT", "siebert"), ("RoBERTa", "roberta"),
+    ("VADER", "vader"), ("VADER-C", "vader_claude"), ("NRC", "nrc"), ("BERT", "bert"), ("RoBERTa", "roberta"),
+    ("SiEBERT", "siebert"),
 )
 
 
@@ -76,6 +82,24 @@ def label(score, threshold=0.05):
     if score <= -threshold:
         return "neg"
     return "neu"
+
+
+def nrc_score(nrc, text):
+    """Score a text with the NRC lexicon's positive and negative words.
+
+    Args:
+        nrc (NRCLex): Analyzer holding the NRC lexicon.
+        text (str): Text to score.
+
+    Returns:
+        tuple[int, int, float]: The number of positive words, the number of
+        negative words, and (positive - negative) / (positive + negative) in
+        [-1, 1], or 0 if there are neither.
+    """
+    # NRCLex's own load_raw_text keeps capitals, so "Happy" would miss "happy"
+    nrc.load_token_list(w.lemmatize() for w in TextBlob(text.lower()).words)
+    pos, neg = nrc.raw_emotion_scores.get("positive", 0), nrc.raw_emotion_scores.get("negative", 0)
+    return pos, neg, (pos - neg) / (pos + neg) if pos + neg else 0.0
 
 
 def classify(model, texts):
@@ -150,7 +174,7 @@ def roberta_scores(texts):
 
 
 def main():
-    """Compare all five tools on every non-blank line and write the JSON.
+    """Compare all six tools on every non-blank line and write the JSON.
 
     Command-line arguments (see ``--help`` and the module docstring): an
     optional positional ``file`` names the text to score (one passage per
@@ -180,9 +204,10 @@ def main():
     vader = SentimentIntensityAnalyzer()
     # VADER joins lexicon_file onto its own package directory, so it must be absolute
     vader_claude = SentimentIntensityAnalyzer(lexicon_file=os.path.abspath(args.lexicon))
+    nrc = NRCLex()
     rows = []
 
-    print(f"{'line':>4}  {'VADER':>13}   {'VADER-C':>13}   {'BERT':>21}   {'SiEBERT':>13}   {'RoBERTa':>13}"
+    print(f"{'line':>4}  {'VADER':>13}   {'VADER-C':>13}   {'NRC':>13}   {'BERT':>21}   {'RoBERTa':>13}   {'SiEBERT':>13}"
           f"   agree  text")
     results = zip(line_nums, texts, bert_scores(texts), siebert_scores(texts), roberta_scores(texts))
     for line, text, (probs, stars, bert_norm, bert_cut), (sie_pos, sie_norm, sie_cut), \
@@ -190,12 +215,13 @@ def main():
         vs = vader.polarity_scores(text)
         compound = vs["compound"]
         vc_score = vader_claude.polarity_scores(text)["compound"]
-        v, vc = label(compound), label(vc_score)
+        nrc_pos, nrc_neg, nrc_norm = nrc_score(nrc, text)
+        v, vc, n = label(compound), label(vc_score), label(nrc_norm)
         b, s = label(bert_norm, threshold=0.2), label(sie_norm, threshold=0.5)
         snippet = text if len(text) <= 60 else text[:57] + "..."
         print(
-            f"{line:>4}  {compound:+.3f} ({v})   {vc_score:+.3f} ({vc})   {stars}★ {probs[stars]:4.0%} {bert_norm:+.3f} ({b})"
-            f"   {sie_norm:+.3f} ({s})   {rob_norm:+.3f} ({r})   {'all' if v == vc == b == s == r else '':>5}  {snippet}"
+            f"{line:>4}  {compound:+.3f} ({v})   {vc_score:+.3f} ({vc})   {nrc_norm:+.3f} ({n})   {stars}★ {probs[stars]:4.0%} {bert_norm:+.3f} ({b})"
+            f"   {rob_norm:+.3f} ({r})   {sie_norm:+.3f} ({s})   {'all' if v == vc == n == b == s == r else '':>5}  {snippet}"
         )
         rows.append({
             "line": line,
@@ -203,11 +229,12 @@ def main():
             "truncated": bert_cut or sie_cut or rob_cut,
             "vader": {"score": compound, "label": v, "neg": vs["neg"], "neu": vs["neu"], "pos": vs["pos"]},
             "vader_claude": {"score": vc_score, "label": vc},
+            "nrc": {"score": round(nrc_norm, 4), "label": n, "pos": nrc_pos, "neg": nrc_neg},
             "bert": {"score": round(bert_norm, 4), "label": b, "stars": stars,
                      "probs": [round(probs[n], 4) for n in range(1, 6)]},
-            "siebert": {"score": round(sie_norm, 4), "label": s, "p_pos": round(sie_pos, 4)},
             "roberta": {"score": round(rob_norm, 4), "label": r,
                         "probs": {name[:3]: round(rob_probs[name], 4) for name in ("negative", "neutral", "positive")}},
+            "siebert": {"score": round(sie_norm, 4), "label": s, "p_pos": round(sie_pos, 4)},
         })
 
     # One row per line of the file, so the output stays readable and diffs cleanly
@@ -226,13 +253,13 @@ def summarize(rows):
     Prints, per tool: label counts and mean score. Then, per pair of tools:
     agreement (same label), disagreement (one said pos, the other neg), the
     remainder (at least one of the pair called the line neutral), and Spearman
-    rank correlation of the scores. Finally, how often all five tools agreed
+    rank correlation of the scores. Finally, how often all six tools agreed
     and how many lines were truncated.
 
     Args:
         rows (list[dict]): The rows collected in ``main``: one dict per line
             with a "score" and "label" for each tool under its key ("vader",
-            "vader_claude", "bert", "siebert", "roberta"), a boolean
+            "vader_claude", "nrc", "bert", "roberta", "siebert"), a boolean
             "truncated" key, and the line's "text".
     """
     labels = ("pos", "neu", "neg")

@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Sentiment tool comparison — VADER · VADER-C · BERT · SiEBERT · RoBERTa</title>
+<title>Sentiment tool comparison — VADER · VADER-C · NRC · BERT · RoBERTa · SiEBERT</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⚖️</text></svg>">
 <style>
 *{box-sizing:border-box}
@@ -208,10 +208,11 @@ let DATA = [], META = {}, N = 0, byLine = new Map(), anyTrunc = false;
 const ALL_TOOLS = [
   { key:"v",  name:"VADER",   color:"#1c7ed6", cutoff:0.05, skey:"v",  lkey:"vl",  tf:false },
   { key:"vc", name:"VADER-C", color:"#ae3ec9", cutoff:0.05, skey:"vc", lkey:"vcl", tf:false },
+  { key:"n",  name:"NRC",     color:"#8f5b34", cutoff:0.05, skey:"n",  lkey:"nl",  tf:false },
   { key:"b",  name:"BERT",    color:"#e8590c", cutoff:0.2,  skey:"b",  lkey:"bl",  tf:true  },
-  { key:"s",  name:"SiEBERT", color:"#0c8599", cutoff:0.5,  skey:"s",  lkey:"sl",  tf:true  },
   /* cutoff null: the model picks its own label, so there is no neutral zone */
   { key:"r",  name:"RoBERTa", color:"#5f3dc4", cutoff:null, skey:"r",  lkey:"rl",  tf:true  },
+  { key:"s",  name:"SiEBERT", color:"#0c8599", cutoff:0.5,  skey:"s",  lkey:"sl",  tf:true  },
 ];
 const MIN_TOOLS = 2; // agreement and pairwise stats need at least two
 /* The tools currently shown, and everything derived from them; set by applyTools. */
@@ -896,7 +897,7 @@ function openDetail(r){
   const bd = $("detail-badges");
   bd.innerHTML = "";
   if (r.tr && truncShown()){
-    const b = el("span", "badge", "✂ truncated: the transformer models saw only the first 512 tokens; VADER read the whole line");
+    const b = el("span", "badge", "✂ truncated: the transformer models saw only the first 512 tokens; VADER and NRC read the whole line");
     bd.append(b);
   }
   const tx = $("detail-text");
@@ -933,13 +934,18 @@ function openDetail(r){
     }
     m.append(bar, el("div", "mtext", `pos ${(r.vp * 100).toFixed(0)}% · neu ${(r.vu * 100).toFixed(0)}% · neg ${(r.vn * 100).toFixed(0)}%`));
   }));
-  /* SiEBERT certainty */
-  if (showing("s")) ex.append(miniMini("SiEBERT certainty", m => {
+  /* NRC word counts */
+  if (showing("n")) ex.append(miniMini("NRC sentiment words", m => {
     const bar = el("div", "hbar");
-    const pos = el("div"); pos.style.width = (r.sp * 100) + "%"; pos.style.background = LAB.pos.color;
-    const neg = el("div"); neg.style.width = ((1 - r.sp) * 100) + "%"; neg.style.background = LAB.neg.color;
-    bar.append(pos, neg);
-    m.append(bar, el("div", "mtext", `P(positive) = ${(r.sp * 100).toFixed(1)}%`));
+    const total = r.np + r.nn;
+    for (const [lab, v, word] of [["pos", r.np, "positive"], ["neg", r.nn, "negative"]]){
+      const seg = el("div");
+      seg.style.width = (total ? v / total * 100 : 0) + "%";
+      seg.style.background = LAB[lab].color;
+      seg.title = `${v} ${word} word${v === 1 ? "" : "s"}`;
+      bar.append(seg);
+    }
+    m.append(bar, el("div", "mtext", total ? `${r.np} positive · ${r.nn} negative` : "no words in the NRC lists"));
   }));
   /* RoBERTa class probabilities */
   if (showing("r")) ex.append(miniMini("RoBERTa probabilities", m => {
@@ -953,6 +959,14 @@ function openDetail(r){
       bar.append(seg);
     }
     m.append(bar, el("div", "mtext", `pos ${(r.rp[2] * 100).toFixed(0)}% · neu ${(r.rp[1] * 100).toFixed(0)}% · neg ${(r.rp[0] * 100).toFixed(0)}%`));
+  }));
+  /* SiEBERT certainty */
+  if (showing("s")) ex.append(miniMini("SiEBERT certainty", m => {
+    const bar = el("div", "hbar");
+    const pos = el("div"); pos.style.width = (r.sp * 100) + "%"; pos.style.background = LAB.pos.color;
+    const neg = el("div"); neg.style.width = ((1 - r.sp) * 100) + "%"; neg.style.background = LAB.neg.color;
+    bar.append(pos, neg);
+    m.append(bar, el("div", "mtext", `P(positive) = ${(r.sp * 100).toFixed(1)}%`));
   }));
   $("detail-agree").innerHTML = "";
   const ac = $("detail-agree");
@@ -1014,19 +1028,21 @@ function layoutAll(){
 window.addEventListener("resize", debounce(layoutAll, 150));
 
 /* ---------- tool selection ---------- */
-const TOOLS_KEY = "sentiment-comparison-tools";
+/* Remembers the hidden tools rather than the shown ones, so newly added tools appear */
+const HIDDEN_KEY = "sentiment-comparison-hidden";
 function savedTools(){
   try {
-    const keys = JSON.parse(localStorage.getItem(TOOLS_KEY));
-    if (Array.isArray(keys)){
-      const valid = keys.filter(k => ALL_TOOLS.some(t => t.key === k));
-      if (valid.length >= MIN_TOOLS) return valid;
+    const hidden = JSON.parse(localStorage.getItem(HIDDEN_KEY));
+    if (Array.isArray(hidden)){
+      const shown = ALL_TOOLS.map(t => t.key).filter(k => !hidden.includes(k));
+      if (shown.length >= MIN_TOOLS) return shown;
     }
   } catch (e) { /* storage blocked or unreadable: show every tool */ }
   return ALL_TOOLS.map(t => t.key);
 }
 function setTools(keys){
-  try { localStorage.setItem(TOOLS_KEY, JSON.stringify(keys)); } catch (e) { /* not remembered */ }
+  const hidden = ALL_TOOLS.map(t => t.key).filter(k => !keys.includes(k));
+  try { localStorage.setItem(HIDDEN_KEY, JSON.stringify(hidden)); } catch (e) { /* not remembered */ }
   applyTools(keys);
   state.pattern = null; // a pattern lists one label per tool, so it no longer applies
   renderLegend();
@@ -1055,7 +1071,7 @@ function toRow(j){
     if (!Object.hasOwn(LAB, v)) throw new Error(`${what} is not pos, neu or neg`);
     return v;
   };
-  const { vader:v = {}, vader_claude:vc = {}, bert:b = {}, siebert:s = {}, roberta:r = {} } = j;
+  const { vader:v = {}, vader_claude:vc = {}, nrc:n = {}, bert:b = {}, siebert:s = {}, roberta:r = {} } = j;
   const stars = num(b.stars, "bert.stars");
   if (![1, 2, 3, 4, 5].includes(stars)) throw new Error("bert.stars is not 1 to 5");
   if (!Array.isArray(b.probs) || b.probs.length !== 5) throw new Error("bert.probs is not a list of 5");
@@ -1064,6 +1080,7 @@ function toRow(j){
     v: num(v.score, "vader.score"), vl: lab(v.label, "vader.label"),
     vn: num(v.neg, "vader.neg"), vu: num(v.neu, "vader.neu"), vp: num(v.pos, "vader.pos"),
     vc: num(vc.score, "vader_claude.score"), vcl: lab(vc.label, "vader_claude.label"),
+    n: num(n.score, "nrc.score"), nl: lab(n.label, "nrc.label"), np: num(n.pos, "nrc.pos"), nn: num(n.neg, "nrc.neg"),
     b: num(b.score, "bert.score"), bl: lab(b.label, "bert.label"), st: stars,
     bp: b.probs.map((p, i) => num(p, `bert.probs[${i}]`)),
     s: num(s.score, "siebert.score"), sl: lab(s.label, "siebert.label"), sp: num(s.p_pos, "siebert.p_pos"),

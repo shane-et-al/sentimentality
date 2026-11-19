@@ -6,11 +6,18 @@ By default, the file is `metamorphosis.txt`, David Wyllie's translation of Franz
 
 - **VADER**: a rule- and word-list-based scorer. English only.
 - **VADER-C**: VADER with its word ratings replaced by those in `VADER-C_lexicon.txt`. It has the same 7,506 words and the same rules, with different ratings for most words.
+- **NRC**: the positive and negative word lists of the [NRC Emotion Lexicon](https://saifmohammad.com/WebPages/NRC-Emotion-Lexicon.htm), via [NRCLex](https://pypi.org/project/NRCLex/). It counts the positive and negative words in a line, with no weights and no rules for negation or intensity. English only.
 - **BERT**: [`nlptown/bert-base-multilingual-uncased-sentiment`](https://huggingface.co/nlptown/bert-base-multilingual-uncased-sentiment), a model trained on product reviews that predicts a 1–5 star rating. Works in English, Spanish, French, German, Dutch and Italian.
-- **SiEBERT**: [`siebert/sentiment-roberta-large-english`](https://huggingface.co/siebert/sentiment-roberta-large-english), a larger model trained on 15 English datasets covering many kinds of text, not just reviews. It only predicts positive or negative. English only.
-- **RoBERTa**: [`cardiffnlp/twitter-roberta-base-sentiment-latest`](https://huggingface.co/cardiffnlp/twitter-roberta-base-sentiment-latest), a model trained on tweets that predicts negative, neutral or positive. Unlike SiEBERT it has a real neutral class. English only.
+- **RoBERTa**: [`cardiffnlp/twitter-roberta-base-sentiment-latest`](https://huggingface.co/cardiffnlp/twitter-roberta-base-sentiment-latest), a model trained on tweets that predicts negative, neutral or positive. English only.
+- **SiEBERT**: [`siebert/sentiment-roberta-large-english`](https://huggingface.co/siebert/sentiment-roberta-large-english), a larger model trained on 15 English datasets covering many kinds of text, not just reviews. Unlike RoBERTa it has no neutral class: it only predicts positive or negative. English only.
 
 ## Usage
+
+NRCLex splits text into words with TextBlob, which needs NLTK's data. Download it once after installing:
+
+```sh
+uv run python -m textblob.download_corpora
+```
 
 ```sh
 uv run python compare_sentiment.py                  # compare each line of metamorphosis.txt
@@ -21,7 +28,7 @@ uv run python compare_sentiment.py --lexicon x.txt  # use another lexicon for VA
 
 Blank lines are skipped. The script prints a summary table and writes the results to a JSON file named after the input (`metamorphosis.txt` → `metamorphosis.json`), one row per line of text. Each run overwrites the file.
 
-BERT, SiEBERT and RoBERTa can read at most 512 tokens (roughly 350–400 English words), so for longer lines they only see the beginning. These lines are marked with `truncated`. VADER always reads the whole line.
+BERT, RoBERTa and SiEBERT can read at most 512 tokens (roughly 350–400 English words), so for longer lines they only see the beginning. These lines are marked with `truncated`. VADER and NRC always read the whole line.
 
 ## Visualization
 
@@ -66,8 +73,8 @@ The page has:
   type or pair, search the text, and sort by score spread to surface the
   biggest differences first.
 - A detail panel (click any chunk) with the full text and exact scores, BERT's
-  star probabilities, VADER's word shares, SiEBERT's certainty and RoBERTa's
-  class probabilities.
+  star probabilities, VADER's word shares, RoBERTa's class probabilities and
+  SiEBERT's certainty.
 
 ## Results file
 
@@ -77,9 +84,10 @@ A JSON object with the input file's name (`source`), the VADER-C lexicon's name 
 {"line": 1, "text": "One morning, when Gregor Samsa woke from troubled dreams, ...", "truncated": false,
  "vader": {"score": -0.5859, "label": "neg", "neg": 0.248, "neu": 0.649, "pos": 0.103},
  "vader_claude": {"score": -0.6705, "label": "neg"},
+ "nrc": {"score": -0.3333, "label": "neg", "pos": 1, "neg": 2},
  "bert": {"score": -0.5189, "label": "neg", "stars": 1, "probs": [0.4095, 0.3467, 0.149, 0.0614, 0.0333]},
- "siebert": {"score": -0.9958, "label": "neg", "p_pos": 0.0021},
- "roberta": {"score": -0.8371, "label": "neg", "probs": {"neg": 0.8434, "neu": 0.1503, "pos": 0.0063}}}
+ "roberta": {"score": -0.8371, "label": "neg", "probs": {"neg": 0.8434, "neu": 0.1503, "pos": 0.0063}},
+ "siebert": {"score": -0.9958, "label": "neg", "p_pos": 0.0021}}
 ```
 
 Every tool has a `score` from −1 to +1 and a `label` of `pos`, `neu` or `neg`.
@@ -88,7 +96,7 @@ Every tool has a `score` from −1 to +1 and a `label` of `pos`, `neu` or `neg`.
 |---|---|---|
 | `line` | 1 and up | Line number in the input file. |
 | `text` | | The line's text, in full. |
-| `truncated` | `true` / `false` | Whether the line was too long for BERT, SiEBERT or RoBERTa, so their scores are based only on the beginning of the line. |
+| `truncated` | `true` / `false` | Whether the line was too long for BERT, RoBERTa or SiEBERT, so their scores are based only on the beginning of the line. |
 | `vader.score` | −1 to +1 | VADER's overall score. It adds up the sentiment of individual words and squashes the total into −1…+1, so longer texts with many emotional words tend toward the ends. |
 | `vader.label` | `pos` / `neu` / `neg` | `pos` if the score is ≥ 0.05, `neg` if ≤ −0.05, otherwise `neu`. These are VADER's standard cutoffs. |
 | `vader.neg` | 0 to 1 | Share of the text VADER reads as negative. |
@@ -96,17 +104,21 @@ Every tool has a `score` from −1 to +1 and a `label` of `pos`, `neu` or `neg`.
 | `vader.pos` | 0 to 1 | Share of the text VADER reads as positive. `neg`, `neu` and `pos` add up to about 1. |
 | `vader_claude.score` | −1 to +1 | Same as `vader.score`, but using the ratings in the VADER-C lexicon. |
 | `vader_claude.label` | `pos` / `neu` / `neg` | Same cutoffs as `vader.label`. |
+| `nrc.score` | −1 to +1 | (positive words − negative words) ÷ (positive words + negative words), or 0 if the line has neither. One positive and no negative words scores +1, the same as ten positive words. |
+| `nrc.label` | `pos` / `neu` / `neg` | `pos` if the score is ≥ 0.05, `neg` if ≤ −0.05, otherwise `neu`. In practice this means more positive than negative words, more negative than positive, or equal counts. |
+| `nrc.pos` | 0 and up | Number of words in the line on the NRC positive list. Words are lowercased and reduced to their noun base form ("dreams" → "dream") before lookup, so verb forms like "hated" are not matched. |
+| `nrc.neg` | 0 and up | Number of words on the NRC negative list. A word can be on both lists. |
 | `bert.score` | −1 to +1 | BERT's output on the same scale as VADER's: the probability-weighted average star rating, mapped so that 1★ = −1, 3★ = 0 and 5★ = +1. |
 | `bert.label` | `pos` / `neu` / `neg` | `pos` if the score is ≥ 0.2, `neg` if ≤ −0.2, otherwise `neu`. The ±0.2 cutoff was chosen for this project, not taken from the model. |
 | `bert.stars` | 1 to 5 | BERT's single most likely star rating. |
 | `bert.probs` | 0 to 1 each | How likely BERT thinks each star rating is, from 1★ to 5★. The five add up to 1. |
-| `siebert.score` | −1 to +1 | P(positive) − P(negative). SiEBERT is usually very sure of itself, so most scores are close to −1 or +1. |
-| `siebert.label` | `pos` / `neu` / `neg` | `pos` if the score is ≥ 0.5, `neg` if ≤ −0.5, otherwise `neu` (SiEBERT less than 75% sure either way). The model has no neutral class, and this cutoff was chosen for this project. |
-| `siebert.p_pos` | 0 to 1 | How likely SiEBERT thinks it is that the line is positive. |
 | `roberta.score` | −1 to +1 | `probs.pos` − `probs.neg`. A line RoBERTa considers neutral scores near 0. |
 | `roberta.label` | `pos` / `neu` / `neg` | Whichever of the three classes RoBERTa rates most likely. Unlike the other tools, this is the model's own choice, not a cutoff on the score. |
 | `roberta.probs` | 0 to 1 each | How likely RoBERTa thinks it is that the line is negative (`neg`), neutral (`neu`) or positive (`pos`). The three add up to 1. |
+| `siebert.score` | −1 to +1 | P(positive) − P(negative). SiEBERT is usually very sure of itself, so most scores are close to −1 or +1. |
+| `siebert.label` | `pos` / `neu` / `neg` | `pos` if the score is ≥ 0.5, `neg` if ≤ −0.5, otherwise `neu` (SiEBERT less than 75% sure either way). The model has no neutral class, and this cutoff was chosen for this project. |
+| `siebert.p_pos` | 0 to 1 | How likely SiEBERT thinks it is that the line is positive. |
 
 ### Comparing the scores
 
-The five scores share a range but measure different things, so equal numbers don't mean equal strength of sentiment. Compare their sign and their ordering across texts, not their exact values. Agreement between labels also depends on the label cutoffs: moving BERT's ±0.2 line changes whether lukewarm texts count as agreeing. SiEBERT almost never labels a line neutral, so it disagrees with the other tools on most lines they call neutral.
+The six scores share a range but measure different things, so equal numbers don't mean equal strength of sentiment. Compare their sign and their ordering across texts, not their exact values. Agreement between labels also depends on the label cutoffs: moving BERT's ±0.2 line changes whether lukewarm texts count as agreeing. SiEBERT almost never labels a line neutral, so it disagrees with the other tools on most lines they call neutral.
