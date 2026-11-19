@@ -1105,7 +1105,7 @@ def main():
         epilog="Example: uv run python make_html.py sentiment_comparison.csv --source pg5200.txt --open",
     )
     ap.add_argument("csv_path", nargs="?", default="sentiment_comparison.csv", help="CSV produced by compare_sentiment.py")
-    ap.add_argument("--html", default="sentiment_comparison.html", help="where to write the HTML")
+    ap.add_argument("--html", default="index.html", help="where to write the HTML")
     ap.add_argument("--source", default="", help="source text name shown in the page header")
     ap.add_argument("--open", action="store_true", help="open the result in a browser")
     args = ap.parse_args()
