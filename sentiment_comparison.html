@@ -8,14 +8,15 @@
 <style>
 *{box-sizing:border-box}
 body{margin:0;background:#f8f9fa;color:#212529;font:14px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif}
-.wrap{max-width:1280px;margin:0 auto;padding:20px 18px 70px}
+.wrap{max-width:1920px;margin:0 auto;padding:16px 18px 40px}
 header h1{margin:0;font-size:22px;letter-spacing:-.01em}
 .sub{margin:4px 0 12px;color:#868e96;font-size:13px}
-.legend{display:flex;flex-wrap:wrap;gap:8px 12px;font-size:12px;margin-bottom:16px}
+.legend{display:flex;flex-wrap:wrap;gap:8px 12px;font-size:12px;margin-bottom:14px}
 .legend .li{display:inline-flex;align-items:center;gap:6px;background:#fff;border:1px solid #e9ecef;border-radius:999px;padding:3px 10px;color:#495057}
 .dot{width:9px;height:9px;border-radius:50%;display:inline-block;flex:none}
 .labchip{width:14px;height:14px;border-radius:4px;display:inline-flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;flex:none}
-.cards{display:grid;gap:12px;grid-template-columns:repeat(auto-fit,minmax(290px,1fr));margin-bottom:12px}
+.cards{display:grid;gap:12px;grid-template-columns:repeat(auto-fit,minmax(290px,1fr));margin-bottom:12px;align-items:start}
+.stack{display:flex;flex-direction:column;gap:12px}
 .card{background:#fff;border:1px solid #e9ecef;border-radius:12px;padding:13px 15px;box-shadow:0 1px 2px rgba(0,0,0,.03)}
 .card h2{margin:0 0 9px;font-size:11px;font-weight:600;letter-spacing:.07em;text-transform:uppercase;color:#868e96}
 .note,.hint{margin:8px 0 0;color:#868e96;font-size:11.5px}
@@ -26,16 +27,16 @@ header h1{margin:0;font-size:22px;letter-spacing:-.01em}
 .segbar>div:hover{outline:2px solid #495057;outline-offset:-2px}
 .seglegend{display:flex;gap:12px;font-size:11.5px;color:#495057;flex-wrap:wrap}
 .seglegend .sw{width:10px;height:10px;border-radius:3px;display:inline-block;margin-right:4px;vertical-align:-1px}
-.dist-row{display:grid;grid-template-columns:minmax(64px,76px) 1fr 58px;gap:8px;align-items:center;margin:8px 0;font-size:12.5px}
+.dist-row{display:grid;grid-template-columns:minmax(64px,76px) 1fr 86px;gap:8px;align-items:center;margin:8px 0;font-size:12.5px}
 .dist-row .name{font-weight:600;white-space:nowrap}
 .stacked{display:flex;height:15px;border-radius:8px;overflow:hidden;background:#f1f3f5}
 .stacked>div{min-width:1px}
 .mean{color:#868e96;text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
 #pairs-wrap{overflow-x:auto}
-@media (min-width:900px){.card.wide{grid-column:span 2}}
+@media (min-width:900px) and (max-width:1199px){.cards{grid-template-columns:minmax(300px,1fr) minmax(0,1.6fr)}.stack{grid-row:span 2}}
 table.pairs{border-collapse:collapse;width:100%;font-size:12.5px}
 table.pairs th{color:#868e96;font-weight:500;text-align:left;padding:3px 6px;border-bottom:1px solid #e9ecef;white-space:nowrap}
-table.pairs td{padding:4.5px 6px;border-bottom:1px solid #f1f3f5;font-variant-numeric:tabular-nums;white-space:nowrap}
+table.pairs td{padding:3.5px 6px;border-bottom:1px solid #f1f3f5;font-variant-numeric:tabular-nums;white-space:nowrap}
 table.pairs th:nth-child(n+2),table.pairs td:nth-child(n+2){text-align:right}
 table.pairs tbody tr{cursor:pointer}
 table.pairs tbody tr:hover{background:#f8f9fa}
@@ -97,6 +98,21 @@ table.pairs tbody tr:hover{background:#f8f9fa}
 .hbar{display:flex;height:12px;border-radius:6px;overflow:hidden;background:#f1f3f5}
 .agreechips{display:flex;gap:7px;align-items:center;margin-top:11px;flex-wrap:wrap;font-size:11.5px;color:#868e96}
 canvas{display:block}
+#detail-empty{color:#868e96;font-size:12.5px;padding:18px 4px;text-align:center}
+#detail:not(.open) #detail-body,#detail.open #detail-empty{display:none}
+/* Wide screens: fixed three-column summary, docked detail panel beside the chunk list */
+@media (min-width:1200px){
+  header{display:flex;align-items:baseline;gap:6px 18px;flex-wrap:wrap;margin-bottom:12px}
+  header .sub{margin:0}
+  header .legend{margin:0 0 0 auto}
+  .cards{grid-template-columns:minmax(320px,1fr) minmax(540px,1.45fr) minmax(300px,1fr)}
+  .workbench{display:grid;grid-template-columns:minmax(0,1fr) 440px;gap:12px;align-items:start}
+  .workbench>.card{min-width:0}
+  #detail{display:block;position:sticky;top:12px;right:auto;width:auto;max-width:none;max-height:calc(100vh - 24px);
+          border-color:#e9ecef;border-radius:12px;box-shadow:0 1px 2px rgba(0,0,0,.03);z-index:auto}
+  .grid-scroll{max-height:max(420px,calc(100vh - 190px))}
+}
+@media (max-width:1199px){#detail:not(.open){display:none}}
 @media (max-width:760px){.extras{grid-template-columns:1fr}.sb{grid-template-columns:56px 1fr 118px}}
 </style>
 </head>
@@ -109,8 +125,10 @@ canvas{display:block}
 </header>
 
 <section class="cards">
+  <div class="stack">
   <div class="card"><h2>Do the tools agree?</h2><div id="agreement"></div><p class="note">Click a bar segment to show only those chunks.</p></div>
   <div class="card"><h2>Label distribution per tool</h2><div id="dist"></div><p class="note">Each tool's own cutoffs applied; <span class="mean" style="display:inline">mean = mean score.</span></p></div>
+  </div>
   <div class="card wide"><h2>Pairwise agreement</h2><div id="pairs-wrap"></div><p class="note">ρ = Spearman rank correlation of the scores. Click a row to show only chunks where that pair disagrees.</p></div>
   <div class="card"><h2>Common label patterns</h2><div id="patterns"></div><p class="note">Chunks sharing the same labels from every tool, most common first. Order: VADER, VADER-C, BERT, SiEBERT, RoBERTa. Click to filter.</p></div>
 </section>
@@ -121,6 +139,7 @@ canvas{display:block}
   <p class="hint">Shaded band = each tool's neutral zone (its label cutoff; RoBERTa picks its own label, so it has none). Hover for values, click a point to inspect that chunk.</p>
 </section>
 
+<div class="workbench">
 <section class="card">
   <h2>Chunk-by-chunk</h2>
   <div class="controls">
@@ -131,7 +150,6 @@ canvas{display:block}
       <option value="minority">Minority report (all but one agree)</option>
       <option value="split2">Split exactly 2 ways</option>
       <option value="split3">Split exactly 3 ways</option>
-      <option value="split4">Split 4 different ways</option>
       <option value="neutral">Any tool says neutral</option>
       <option value="trunc">Truncated (over 512 tokens)</option>
     </select>
@@ -150,9 +168,9 @@ canvas{display:block}
   <div class="grid-scroll" id="grid-scroll"><canvas id="grid"></canvas><div id="empty">no chunks match the current filters</div></div>
   <p class="hint">Hover for exact scores · click a row for details · ✂ marks chunks cut off at 512 tokens for the transformer models.</p>
 </section>
-</div>
-
 <aside id="detail">
+  <div id="detail-empty">Click a chunk in the chart or the list to see its full text and scores.</div>
+  <div id="detail-body">
   <div class="dnav">
     <span class="title" id="detail-title"></span>
     <button id="detail-prev" title="Previous chunk (↑)">↑</button>
@@ -165,7 +183,12 @@ canvas{display:block}
   <div id="detail-scores"></div>
   <div class="extras" id="detail-extras"></div>
   <div class="agreechips" id="detail-agree"></div>
+  </div>
 </aside>
+</div>
+</div>
+
+
 
 <div id="tooltip"></div>
 <noscript>This visualization needs JavaScript.</noscript>
@@ -186,6 +209,8 @@ const TOOLS = [
   { key:"r",  name:"RoBERTa", color:"#5f3dc4", cutoff:null, skey:"r",  lkey:"rl"  },
 ];
 const NT = TOOLS.length;
+/* a chunk can get at most this many distinct labels (there are only pos/neu/neg) */
+const SPLITS = [1, 2, 3].filter(k => k <= NT);
 const PAIRS = [];
 for (let i = 0; i < NT; i++) for (let j = i + 1; j < NT; j++) PAIRS.push([i, j]);
 
@@ -272,7 +297,6 @@ function passes(r){
     }
     case "split2": return r.distinct === 2;
     case "split3": return r.distinct === 3;
-    case "split4": return r.distinct === 4;
     case "trunc": return r.tr;
     case "neutral": return r.L.includes("neu");
   }
@@ -313,7 +337,7 @@ function renderHeader(){
   dl.append(el("span", "d", "left gutter:"));
   const dot = el("span", "dotmini"); dot.style.background = "#868e96";
   dl.append(mkSpanWrap(dot, "dot = all labels equal"));
-  for (const k of [2, 3, 4]){
+  for (const k of SPLITS.slice(1)){
     const s = el("span", "dsev"); s.style.background = SPLIT_FILL[k]; s.style.boxShadow = `inset 0 0 0 1px ${SPLIT_EDGE[k]}`;
     dl.append(mkSpanWrap(s, `${SPLIT_NAME[k]}`));
   }
@@ -345,7 +369,7 @@ function renderAgreement(){
   big.append(minSpan);
   ag.append(big);
   const bar = el("div", "segbar");
-  for (const k of [1, 2, 3, 4]){
+  for (const k of SPLITS){
     if (!counts[k]) continue;
     const seg = el("div");
     seg.style.width = (100 * counts[k] / N) + "%";
@@ -357,7 +381,7 @@ function renderAgreement(){
   }
   ag.append(bar);
   const leg = el("div", "seglegend");
-  for (const k of [1, 2, 3, 4]){
+  for (const k of SPLITS){
     const s = el("span");
     const sw = el("span", "sw"); sw.style.background = SPLIT_FILL[k];
     s.append(sw, el("span", null, `${SPLIT_NAME[k]}: ${counts[k]}`));
@@ -455,7 +479,7 @@ function renderPatterns(){
     const k = r.L.join(",");
     counts.set(k, (counts.get(k) || 0) + 1);
   }
-  const top = [...counts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 8);
+  const top = [...counts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 10);
   for (const [k, cnt] of top){
     const btn = el("button", "pat");
     btn.type = "button";
@@ -634,7 +658,7 @@ grid.addEventListener("click", e => {
 
 /* ---------- score timeline ---------- */
 const chart = $("chart");
-const PANEL_H = 86, PANEL_GAP = 14, TOP_PAD = 4, BOT_PAD = 24;
+const PANEL_H = 56, PANEL_GAP = 6, TOP_PAD = 2, BOT_PAD = 20;
 let chartW = 800, chartHover = -1;
 
 function chartGeom(){
@@ -876,7 +900,7 @@ function openDetail(r){
   $("detail-agree").innerHTML = "";
   const ac = $("detail-agree");
   TOOLS.forEach((t, idx) => {
-    const c = el("span", "minichip", t.name.slice(0, 6));
+    const c = el("span", "minichip", t.name);
     c.style.background = LAB[r.L[idx]].chipBg;
     c.style.color = LAB[r.L[idx]].chipFg;
     c.title = `${t.name}: ${r.L[idx]} (${fmt(r.S[idx])})`;
@@ -928,7 +952,9 @@ $("sort").addEventListener("change", e => { state.sort = e.target.value; compute
 $("dim").addEventListener("change", e => { state.dim = e.target.checked; renderGrid(); });
 
 function layoutAll(){
-  chartW = Math.max(320, ((chart.parentElement && chart.parentElement.clientWidth) || chart.clientWidth || 800));
+  /* inner width of the card: clientWidth includes its padding */
+  const card = chart.parentElement, cs = getComputedStyle(card);
+  chartW = Math.max(320, card.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight));
   layoutGrid();
   renderGrid();
   drawChart();
